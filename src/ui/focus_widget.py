@@ -79,6 +79,7 @@ class FocusDashboardWidget(QWidget):
 
     session_started = Signal(int)  # duration_minutes
     session_completed = Signal(int, int)  # duration_minutes, study_list_id
+    timer_tick_signal = Signal(int, int, bool, bool)  # seconds_left, total_seconds, is_running, is_paused
 
     DURATIONS = [5, 10, 15, 20, 25, 30, 45, 60, 90, 120]
 
@@ -473,6 +474,7 @@ class FocusDashboardWidget(QWidget):
                 "QPushButton { background-color: #d84315; color: white; border: none; border-radius: 6px; }"
             )
             self.session_started.emit(mins)
+            self.timer_tick_signal.emit(self.seconds_left, self.total_session_seconds, True, False)
         elif not self.is_paused:
             # Pause session
             self.is_paused = True
@@ -481,6 +483,7 @@ class FocusDashboardWidget(QWidget):
             self.btn_start.setStyleSheet(
                 "QPushButton { background-color: #2e7d32; color: white; border: none; border-radius: 6px; }"
             )
+            self.timer_tick_signal.emit(self.seconds_left, self.total_session_seconds, True, True)
         else:
             # Resume session
             self.is_paused = False
@@ -489,18 +492,20 @@ class FocusDashboardWidget(QWidget):
             self.btn_start.setStyleSheet(
                 "QPushButton { background-color: #d84315; color: white; border: none; border-radius: 6px; }"
             )
+            self.timer_tick_signal.emit(self.seconds_left, self.total_session_seconds, True, False)
 
     def _on_tick(self):
         if self.seconds_left > 0:
             self.seconds_left -= 1
             m, s = divmod(self.seconds_left, 60)
             self.lbl_time_display.setText(f"{m:02d}:{s:02d}")
+            self.timer_tick_signal.emit(self.seconds_left, self.total_session_seconds, True, False)
         else:
             self.timer.stop()
             self.is_running = False
             self.is_paused = False
 
-            mins = self.DURATIONS[self.current_duration_idx]
+            mins = max(1, self.total_session_seconds // 60)
             self.db_manager.log_focus_session(self.selected_study_list_id, mins)
 
             self.btn_time_up.setEnabled(True)
@@ -513,6 +518,7 @@ class FocusDashboardWidget(QWidget):
 
             self._update_duration_display()
             self.refresh_focus_dashboard()
+            self.timer_tick_signal.emit(0, 0, False, False)
 
             QMessageBox.information(
                 self,
@@ -520,6 +526,41 @@ class FocusDashboardWidget(QWidget):
                 f"🎉 Great job! You completed a {mins}-minute focus session.",
             )
             self.session_completed.emit(mins, self.selected_study_list_id)
+
+    def handle_topbar_timer_click(self, default_mins: int = 25):
+        """Called when user clicks ⏱️ Timer button on top bar."""
+        if self.is_running:
+            # Toggle pause / resume or prompt stop
+            if not self.is_paused:
+                self._on_start_clicked()  # Pause
+            else:
+                self._on_start_clicked()  # Resume
+        else:
+            mins, ok = QInputDialog.getInt(self, "Study Timer", "Set Study Timer (minutes):", default_mins, 1, 180)
+            if ok and mins > 0:
+                self.start_custom_timer(mins)
+
+    def start_custom_timer(self, mins: int):
+        if self.is_running:
+            self.timer.stop()
+
+        self.total_session_seconds = mins * 60
+        self.seconds_left = self.total_session_seconds
+        self.is_running = True
+        self.is_paused = False
+        self.timer.start()
+
+        self.btn_time_up.setEnabled(False)
+        self.btn_time_down.setEnabled(False)
+        self.chk_skip_breaks.setEnabled(False)
+        self.lbl_time_display.setText(f"{mins:02d}:00")
+
+        self.btn_start.setText("⏸  Pause focus session")
+        self.btn_start.setStyleSheet(
+            "QPushButton { background-color: #d84315; color: white; border: none; border-radius: 6px; }"
+        )
+        self.session_started.emit(mins)
+        self.timer_tick_signal.emit(self.seconds_left, self.total_session_seconds, True, False)
 
     def _prompt_add_study_list(self):
         name, ok = QInputDialog.getText(self, "Create Study List", "Study List Name:")

@@ -39,8 +39,9 @@ async def check_auth(update: Update) -> bool:
 # =====================================================================
 
 def capture_window_screenshot(target_title: str) -> Tuple[Optional[str], Optional[str]]:
-    """Finds target window, restores if minimized, screenshots via mss."""
-    windows = gw.getWindowsWithTitle(target_title)
+    """Finds target window by case-insensitive title substring, restores if minimized, screenshots via mss."""
+    target_lower = target_title.lower()
+    windows = [w for w in gw.getAllWindows() if w.title and target_lower in w.title.lower()]
     if not windows:
         return None, f"No window matching '{target_title}' was found."
 
@@ -48,6 +49,8 @@ def capture_window_screenshot(target_title: str) -> Tuple[Optional[str], Optiona
     if win.isMinimized:
         try:
             win.restore()
+            import time
+            time.sleep(0.2)
         except Exception:
             pass
 
@@ -165,7 +168,7 @@ async def timer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     delay_seconds = minutes * 60.0
     context.job_queue.run_once(
         timer_callback,
-        due=delay_seconds,
+        when=delay_seconds,
         chat_id=chat_id,
         name=str(chat_id),
         data={"type": "timer"},
@@ -201,7 +204,7 @@ async def pomodoro_callback(context: ContextTypes.DEFAULT_TYPE):
             }
             context.job_queue.run_once(
                 pomodoro_callback,
-                due=break_min * 60.0,
+                when=break_min * 60.0,
                 chat_id=chat_id,
                 name=str(chat_id),
                 data=next_data,
@@ -227,7 +230,7 @@ async def pomodoro_callback(context: ContextTypes.DEFAULT_TYPE):
         }
         context.job_queue.run_once(
             pomodoro_callback,
-            due=work_min * 60.0,
+            when=work_min * 60.0,
             chat_id=chat_id,
             name=str(chat_id),
             data=next_data,
@@ -268,7 +271,7 @@ async def pomodoro_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     context.job_queue.run_once(
         pomodoro_callback,
-        due=work_min * 60.0,
+        when=work_min * 60.0,
         chat_id=chat_id,
         name=str(chat_id),
         data=data,

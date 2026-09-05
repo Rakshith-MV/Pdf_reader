@@ -72,5 +72,54 @@ class TestSelectionAndBookmarks(unittest.TestCase):
         viewer.clear_selection_and_toolbar()
         self.assertIsNone(viewer.active_selection)
 
+    def test_double_click_word_selection(self):
+        canvas = PageCanvas(0)
+        canvas.words = [
+            (10.0, 10.0, 40.0, 20.0, "Hello"),
+            (50.0, 10.0, 90.0, 20.0, "World."),
+        ]
+        canvas.zoom = 1.0
+        canvas._select_word_at_pos(QPoint(60, 15))
+        self.assertEqual(canvas.selected_text, "World.")
+
+    def test_triple_click_sentence_selection(self):
+        canvas = PageCanvas(0)
+        canvas.words = [
+            (10.0, 10.0, 40.0, 20.0, "First"),
+            (50.0, 10.0, 90.0, 20.0, "sentence."),
+            (100.0, 10.0, 140.0, 20.0, "Second"),
+            (150.0, 10.0, 190.0, 20.0, "sentence."),
+        ]
+        canvas.zoom = 1.0
+        canvas._select_sentence_at_pos(QPoint(25, 15))
+        self.assertEqual(canvas.selected_text, "First sentence.")
+
+        canvas._select_sentence_at_pos(QPoint(120, 15))
+        self.assertEqual(canvas.selected_text, "Second sentence.")
+
+    def test_timer_synchronization(self):
+        from src.ui.focus_widget import FocusDashboardWidget
+        from src.ui.bottom_bar import TopBarWidget
+
+        focus_dash = FocusDashboardWidget(self.db)
+        top_bar = TopBarWidget()
+
+        focus_dash.timer_tick_signal.connect(top_bar.sync_timer_state)
+
+        # Emit timer tick signal (15 mins left, total 15 mins, running, not paused)
+        focus_dash.timer_tick_signal.emit(900, 900, True, False)
+        self.assertEqual(top_bar.btn_timer.text(), "⏱️ 15:00")
+
+        # Emit paused state
+        focus_dash.timer_tick_signal.emit(900, 900, True, True)
+        self.assertEqual(top_bar.btn_timer.text(), "⏸️ 15:00")
+
+        # Emit stopped state
+        focus_dash.timer_tick_signal.emit(0, 0, False, False)
+        self.assertEqual(top_bar.btn_timer.text(), "⏱️ Timer")
+
+        focus_dash.close()
+        top_bar.close()
+
 if __name__ == "__main__":
     unittest.main()

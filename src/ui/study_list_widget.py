@@ -36,9 +36,7 @@ class StudyListWidget(QWidget):
 
         # Header
         header = QLabel("Study Lists")
-        header_font = QFont()
-        header_font.setBold(True)
-        header_font.setPointSize(13)
+        header_font = QFont("Segoe UI", 13, QFont.Bold)
         header.setFont(header_font)
         layout.addWidget(header)
 

@@ -45,10 +45,10 @@ class DocumentListItemWidget(QWidget):
         info_layout = QVBoxLayout()
         info_layout.setSpacing(3)
 
-        self.title_label = QLabel(doc_data.get("title", "Untitled"))
-        title_font = QFont()
+        title_text = doc_data.get("title") or os.path.basename(doc_data.get("file_path", "Untitled"))
+        self.title_label = QLabel(title_text)
+        title_font = QFont("Segoe UI", 9)
         title_font.setBold(True)
-        title_font.setPointSize(9)
         self.title_label.setFont(title_font)
         self.title_label.setWordWrap(True)
         info_layout.addWidget(self.title_label)

@@ -1,7 +1,12 @@
 import json
+import os
+import shutil
+import subprocess
+import time
 import urllib.parse
+import winreg
 from typing import List, Tuple, Optional, Dict, Any
-from PySide6.QtCore import Qt, QRectF, Signal, Slot, QPoint, QRect, QTimer, QUrl, QEvent
+from PySide6.QtCore import Qt, QRectF, Signal, Slot, QPoint, QRect, QTimer, QUrl, QEvent, QThreadPool
 from PySide6.QtGui import (
     QPainter,
     QPixmap,
@@ -32,6 +37,67 @@ from PySide6.QtWidgets import (
 )
 from src.reader.document import DocumentReader
 from src.reader.render_cache import RenderCache
+from src.reader.render_worker import PageRenderTask
+
+
+def find_chrome_executable() -> Optional[str]:
+    """Locates chrome.exe via Registry App Paths, standard Windows installation paths, or system PATH."""
+    for hkey in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        try:
+            with winreg.OpenKey(hkey, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe") as key:
+                val, _ = winreg.QueryValueEx(key, "")
+                if val and os.path.exists(val):
+                    return val
+        except Exception:
+            pass
+
+    candidates = [
+        os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%ProgramData%\Google\Chrome\Application\chrome.exe"),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+
+    which_chrome = shutil.which("chrome") or shutil.which("chrome.exe")
+    if which_chrome:
+        return which_chrome
+
+    return None
+
+
+def open_url_in_right_half_chrome(url: str):
+    """Launches Chrome in a new window snapped to the right half of the primary screen."""
+    chrome_path = find_chrome_executable()
+
+    screen = QApplication.primaryScreen()
+    if screen:
+        geom = screen.availableGeometry()
+        w = geom.width() // 2
+        h = geom.height()
+        x = geom.x() + w
+        y = geom.y()
+    else:
+        x, y, w, h = 960, 0, 960, 1040
+
+    if chrome_path:
+        try:
+            cmd = [
+                chrome_path,
+                "--new-window",
+                f"--window-position={x},{y}",
+                f"--window-size={w},{h}",
+                url,
+            ]
+            subprocess.Popen(cmd)
+            return
+        except Exception:
+            pass
+
+    # Fallback to default browser if Chrome executable could not be launched directly
+    QDesktopServices.openUrl(QUrl(url))
 
 HIGHLIGHT_COLORS = [
     ("#FFF59D", "Yellow"),
@@ -130,6 +196,11 @@ class PageCanvas(QWidget):
         self.selected_rects: List[Tuple[float, float, float, float]] = []
         self.selected_text: str = ""
 
+        # Multi-click tracking (double-click word, triple-click sentence)
+        self.click_count: int = 0
+        self.last_click_time: float = 0.0
+        self.last_click_pos: QPoint = QPoint()
+
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setStyleSheet("PageCanvas { background-color: white; border: 1px solid #1a1a1a; }")
@@ -165,115 +236,244 @@ class PageCanvas(QWidget):
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
+            now = time.time()
+            pos = event.position().toPoint()
+            dt = now - self.last_click_time
+            dist = (pos - self.last_click_pos).manhattanLength()
+
+            if dt < 0.45 and dist < 8:
+                self.click_count += 1
+            else:
+                self.click_count = 1
+
+            self.last_click_time = now
+            self.last_click_pos = pos
+
             self.clear_selection_signal.emit()
-            self.is_selecting = True
-            self.select_start = event.position().toPoint()
-            self.select_current = event.position().toPoint()
-            self.selected_words = []
-            self.selected_rects = []
-            self.selected_text = ""
-            self.update()
+            self.select_start = pos
+            self.select_current = pos
+            self.is_selecting = False
+
+            if self.click_count == 2:
+                # Double click -> select word under cursor
+                self._select_word_at_pos(pos)
+                if self.selected_text.strip() and self.selected_rects:
+                    self.text_selected.emit(self.page_num, self.selected_text, self.selected_rects)
+                self.update()
+            elif self.click_count >= 3:
+                # Triple click -> select sentence under cursor
+                self._select_sentence_at_pos(pos)
+                if self.selected_text.strip() and self.selected_rects:
+                    self.text_selected.emit(self.page_num, self.selected_text, self.selected_rects)
+                self.update()
+            else:
+                self.selected_words = []
+                self.selected_rects = []
+                self.selected_text = ""
+                self.update()
+
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        if self.is_selecting:
-            self.select_current = event.position().toPoint()
-            self._update_text_selection()
-            self.update()
+        pos = event.position().toPoint()
+
+        if self.zoom > 0 and self.words:
+            px = pos.x() / self.zoom
+            py = pos.y() / self.zoom
+
+            # Update Cursor Icon (I-Beam over text, Arrow elsewhere)
+            is_over_text = any(
+                (w[0] - 2) <= px <= (w[2] + 2) and (w[1] - 2) <= py <= (w[3] + 2)
+                for w in self.words
+            )
+            if is_over_text:
+                self.setCursor(QCursor(Qt.IBeamCursor))
+            else:
+                self.setCursor(QCursor(Qt.ArrowCursor))
+
+        if event.buttons() & Qt.LeftButton and self.click_count == 1:
+            dist = (pos - self.select_start).manhattanLength()
+            if dist > 5 or self.is_selecting:
+                self.is_selecting = True
+                self.select_current = pos
+                self._update_text_selection()
+                self.update()
+
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
-        if event.button() == Qt.LeftButton and self.is_selecting:
-            self.is_selecting = False
-            self._update_text_selection()
+        if event.button() == Qt.LeftButton:
+            if self.is_selecting:
+                self.is_selecting = False
+                self._update_text_selection()
 
-            if self.selected_text.strip() and self.selected_rects:
-                self.text_selected.emit(self.page_num, self.selected_text, self.selected_rects)
-            else:
-                rect = QRect(self.select_start, self.select_current).normalized()
-                if rect.width() > 10 and rect.height() > 10 and self.zoom > 0:
-                    ux, uy = rect.x() / self.zoom, rect.y() / self.zoom
-                    uw, uh = rect.width() / self.zoom, rect.height() / self.zoom
-                    self.region_selected.emit(self.page_num, ux, uy, uw, uh)
+                if self.selected_text.strip() and self.selected_rects:
+                    self.text_selected.emit(self.page_num, self.selected_text, self.selected_rects)
+                else:
+                    rect = QRect(self.select_start, self.select_current).normalized()
+                    if rect.width() > 10 and rect.height() > 10 and self.zoom > 0:
+                        ux, uy = rect.x() / self.zoom, rect.y() / self.zoom
+                        uw, uh = rect.width() / self.zoom, rect.height() / self.zoom
+                        self.region_selected.emit(self.page_num, ux, uy, uw, uh)
 
-            self.update()
+                self.update()
+            elif self.click_count == 1:
+                # Single left click without drag: clear selection (do not select text)
+                self.clear_selection()
+                self.clear_selection_signal.emit()
+
         super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event: QWheelEvent):
         event.ignore()
 
-    def _get_word_index_at_pos(self, px: float, py: float) -> int:
-        """Finds index of word in self.words closest in reading order to unscaled point (px, py)."""
+    def _get_sorted_lines(self) -> List[List[Tuple[float, float, float, float, str]]]:
+        """Groups words into visual horizontal lines sorted top-to-bottom and left-to-right."""
         if not self.words:
-            return -1
+            return []
 
-        # 1. Direct hit check
-        for idx, (x0, y0, x1, y1, word) in enumerate(self.words):
-            if x0 <= px <= x1 and y0 <= py <= y1:
-                return idx
-
-        # 2. Group words into horizontal lines
-        lines = []
-        for idx, (x0, y0, x1, y1, word) in enumerate(self.words):
+        lines: List[List[Tuple[float, float, float, float, str]]] = []
+        for w in self.words:
+            x0, y0, x1, y1, word = w
             matched = False
             for line in lines:
-                l_min_y, l_max_y, indices = line
-                if not (y1 < l_min_y or y0 > l_max_y):
-                    indices.append(idx)
-                    line[0] = min(l_min_y, y0)
-                    line[1] = max(l_max_y, y1)
+                # Check vertical overlap with line bounds
+                l_y0 = min(item[1] for item in line)
+                l_y1 = max(item[3] for item in line)
+                l_height = max(1.0, l_y1 - l_y0)
+                overlap = max(0.0, min(y1, l_y1) - max(y0, l_y0))
+                if overlap >= 0.4 * l_height or (y0 >= l_y0 - 2 and y1 <= l_y1 + 2):
+                    line.append(w)
                     matched = True
                     break
             if not matched:
-                lines.append([y0, y1, [idx]])
+                lines.append([w])
 
-        if not lines:
-            return 0
+        # Sort lines top-to-bottom
+        lines.sort(key=lambda l: sum(w[1] for w in l) / len(l))
+        # Sort words inside each line left-to-right
+        for line in lines:
+            line.sort(key=lambda w: w[0])
 
-        lines.sort(key=lambda l: l[0])
+        return lines
 
-        # 3. Find target line
-        if py < lines[0][0]:
-            target_line = lines[0]
-        elif py > lines[-1][1]:
-            target_line = lines[-1]
-        else:
-            best_dist = float("inf")
-            target_line = lines[0]
+    def _select_word_at_pos(self, pos: QPoint):
+        if not self.words or self.zoom <= 0:
+            return
+
+        px = pos.x() / self.zoom
+        py = pos.y() / self.zoom
+
+        # Direct hit check
+        for w in self.words:
+            x0, y0, x1, y1, text = w
+            if (x0 - 2) <= px <= (x1 + 2) and (y0 - 2) <= py <= (y1 + 2):
+                self.selected_words = [w]
+                self.selected_text = text
+                self.selected_rects = [(x0, y0, x1, y1)]
+                return
+
+        # Proximity check on closest line
+        lines = self._get_sorted_lines()
+        best_word = None
+        min_dist = float("inf")
+
+        for line in lines:
+            for w in line:
+                x0, y0, x1, y1, text = w
+                cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+                dist = (px - cx) ** 2 + (py - cy) ** 2
+                if dist < min_dist:
+                    min_dist = dist
+                    best_word = w
+
+        if best_word and min_dist < 2500:  # within ~50px
+            x0, y0, x1, y1, text = best_word
+            self.selected_words = [best_word]
+            self.selected_text = text
+            self.selected_rects = [(x0, y0, x1, y1)]
+
+    def _select_sentence_at_pos(self, pos: QPoint):
+        """Selects the entire sentence containing the word at pos."""
+        if not self.words or self.zoom <= 0:
+            return
+
+        lines = self._get_sorted_lines()
+        flat_words: List[Tuple[float, float, float, float, str]] = []
+        for line in lines:
+            flat_words.extend(line)
+
+        if not flat_words:
+            return
+
+        # Find target word index
+        px = pos.x() / self.zoom
+        py = pos.y() / self.zoom
+        target_idx = 0
+        min_dist = float("inf")
+
+        for idx, w in enumerate(flat_words):
+            x0, y0, x1, y1, _ = w
+            cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+            dist = (px - cx) ** 2 + (py - cy) ** 2
+            if dist < min_dist:
+                min_dist = dist
+                target_idx = idx
+
+        # Expand backwards to start of sentence
+        start_idx = target_idx
+        while start_idx > 0:
+            prev_word = flat_words[start_idx - 1][4].strip()
+            if prev_word.endswith((".", "?", "!", ".\"", ".\'")):
+                break
+            start_idx -= 1
+
+        # Expand forwards to end of sentence
+        end_idx = target_idx
+        while end_idx < len(flat_words) - 1:
+            curr_word = flat_words[end_idx][4].strip()
+            if curr_word.endswith((".", "?", "!", ".\"", ".\'")):
+                break
+            end_idx += 1
+
+        matched_words = flat_words[start_idx : end_idx + 1]
+        self.selected_words = matched_words
+        self.selected_text = " ".join(w[4] for w in matched_words)
+        self.selected_rects = self._build_merged_line_rects(matched_words)
+
+    def _build_merged_line_rects(
+        self, words: List[Tuple[float, float, float, float, str]]
+    ) -> List[Tuple[float, float, float, float]]:
+        """Merges word bounding boxes into clean horizontal line highlight rectangles."""
+        if not words:
+            return []
+
+        # Group selected words into lines
+        lines: List[List[Tuple[float, float, float, float, str]]] = []
+        for w in words:
+            matched = False
             for line in lines:
-                l_min_y, l_max_y, _ = line
-                if l_min_y <= py <= l_max_y:
-                    target_line = line
+                l_y0 = min(item[1] for item in line)
+                l_y1 = max(item[3] for item in line)
+                if not (w[3] < l_y0 or w[1] > l_y1):
+                    line.append(w)
+                    matched = True
                     break
-                dist = min(abs(py - l_min_y), abs(py - l_max_y))
-                if dist < best_dist:
-                    best_dist = dist
-                    target_line = line
+            if not matched:
+                lines.append([w])
 
-        # 4. Find word on target line by x coordinate
-        indices = target_line[2]
-        indices.sort(key=lambda i: self.words[i][0])
+        rects = []
+        for line in lines:
+            x0 = min(w[0] for w in line)
+            y0 = min(w[1] for w in line)
+            x1 = max(w[2] for w in line)
+            y1 = max(w[3] for w in line)
+            rects.append((x0, y0, x1, y1))
 
-        if px <= self.words[indices[0]][0]:
-            return indices[0]
-        if px >= self.words[indices[-1]][1]:
-            return indices[-1]
-
-        best_idx = indices[0]
-        min_dx = float("inf")
-        for i in indices:
-            x0, _, x1, _, _ = self.words[i]
-            if x0 <= px <= x1:
-                return i
-            mid_x = (x0 + x1) / 2.0
-            dx = abs(px - mid_x)
-            if dx < min_dx:
-                min_dx = dx
-                best_idx = i
-
-        return best_idx
+        return rects
 
     def _update_text_selection(self):
+        """Chrome PDF Viewer 2D text selection algorithm."""
         if not self.words or self.zoom <= 0:
             return
 
@@ -282,25 +482,52 @@ class PageCanvas(QWidget):
         curr_px = self.select_current.x() / self.zoom
         curr_py = self.select_current.y() / self.zoom
 
-        start_idx = self._get_word_index_at_pos(start_px, start_py)
-        end_idx = self._get_word_index_at_pos(curr_px, curr_py)
-
-        if start_idx < 0 or end_idx < 0:
-            self.selected_words = []
-            self.selected_rects = []
-            self.selected_text = ""
+        lines = self._get_sorted_lines()
+        if not lines:
             return
 
-        idx_a = min(start_idx, end_idx)
-        idx_b = max(start_idx, end_idx)
+        # Determine start line and end line by Y coordinate
+        # Normalize so (s_x, s_y) is top-leftmost and (c_x, c_y) is bottom-rightmost
+        if (start_py > curr_py) or (abs(start_py - curr_py) < 8 and start_px > curr_px):
+            s_x, s_y = curr_px, curr_py
+            e_x, e_y = start_px, start_py
+        else:
+            s_x, s_y = start_px, start_py
+            e_x, e_y = curr_px, curr_py
 
-        matched_words = self.words[idx_a : idx_b + 1]
-        text_parts = [w[4] for w in matched_words]
-        rects = [(w[0], w[1], w[2], w[3]) for w in matched_words]
+        selected_words = []
+        for line in lines:
+            l_y0 = min(w[1] for w in line)
+            l_y1 = max(w[3] for w in line)
 
-        self.selected_words = matched_words
-        self.selected_rects = rects
-        self.selected_text = " ".join(text_parts)
+            # Skip lines strictly above selection start or strictly below selection end
+            if l_y1 < s_y - 10 or l_y0 > e_y + 10:
+                continue
+
+            is_start_line = (l_y0 <= s_y <= l_y1) or (l_y0 <= s_y + 8 and l_y1 >= s_y - 8)
+            is_end_line = (l_y0 <= e_y <= l_y1) or (l_y0 <= e_y + 8 and l_y1 >= e_y - 8)
+
+            if is_start_line and is_end_line:
+                min_x, max_x = min(s_x, e_x), max(s_x, e_x)
+                for w in line:
+                    mid_x = (w[0] + w[2]) / 2.0
+                    if min_x <= mid_x <= max_x or (w[0] <= max_x and w[2] >= min_x):
+                        selected_words.append(w)
+            elif is_start_line:
+                for w in line:
+                    if w[2] >= s_x:
+                        selected_words.append(w)
+            elif is_end_line:
+                for w in line:
+                    if w[0] <= e_x:
+                        selected_words.append(w)
+            else:
+                # Middle lines: select all words
+                selected_words.extend(line)
+
+        self.selected_words = selected_words
+        self.selected_text = " ".join(w[4] for w in selected_words)
+        self.selected_rects = self._build_merged_line_rects(selected_words)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -388,6 +615,7 @@ class PDFViewerWidget(QScrollArea):
         self.search_boxes_by_page: Dict[int, List[Tuple[float, float, float, float]]] = {}
         self.notes_by_page: Dict[int, List[Dict[str, Any]]] = {}
         self.highlights_by_page: Dict[int, List[Dict[str, Any]]] = {}
+        self.pending_tasks: Dict[Tuple[int, float, str], bool] = {}
 
         self.setAlignment(Qt.AlignCenter)
         self.setWidgetResizable(True)
@@ -558,31 +786,70 @@ class PDFViewerWidget(QScrollArea):
 
             is_near_viewport = (
                 not self.is_continuous_scroll
-                or (canvas_y + canvas_h >= scroll_y - 1000 and canvas_y <= scroll_y + viewport_rect.height() + 1000)
+                or (canvas_y + canvas_h >= scroll_y - 1200 and canvas_y <= scroll_y + viewport_rect.height() + 1200)
             )
 
             if is_near_viewport:
-                pixmap = self.render_cache.get(p_num, self.zoom_level, self.theme)
-                if pixmap is None:
-                    pixmap = self.doc_reader.render_page(p_num, self.zoom_level, theme=self.theme)
-                    self.render_cache.put(p_num, self.zoom_level, self.theme, pixmap)
+                cached_item = self.render_cache.get(p_num, self.zoom_level, self.theme)
+                if cached_item is not None:
+                    pixmap, words = cached_item
+                    canvas.set_page_data(
+                        pixmap=pixmap,
+                        zoom=self.zoom_level,
+                        unscaled_size=unscaled_size,
+                        words=words,
+                        search_boxes=self.search_boxes_by_page.get(p_num, []),
+                        notes=self.notes_by_page.get(p_num, []),
+                        highlights=self.highlights_by_page.get(p_num, []),
+                    )
+                else:
+                    # Enqueue background page rendering task off the UI thread
+                    task_key = (p_num, round(self.zoom_level, 2), self.theme)
+                    if task_key not in self.pending_tasks:
+                        self.pending_tasks[task_key] = True
+                        task = PageRenderTask(self.doc_reader, p_num, self.zoom_level, self.theme)
+                        task.signals.render_complete.connect(self._on_page_rendered)
+                        QThreadPool.globalInstance().start(task)
 
-                words = self.doc_reader.get_words(p_num)
-                canvas.set_page_data(
-                    pixmap=pixmap,
-                    zoom=self.zoom_level,
-                    unscaled_size=unscaled_size,
-                    words=words,
-                    search_boxes=self.search_boxes_by_page.get(p_num, []),
-                    notes=self.notes_by_page.get(p_num, []),
-                    highlights=self.highlights_by_page.get(p_num, []),
-                )
+                    cached_words = self.render_cache.get_words(p_num) or []
+                    canvas.set_page_data(
+                        pixmap=QPixmap(),
+                        zoom=self.zoom_level,
+                        unscaled_size=unscaled_size,
+                        words=cached_words,
+                        search_boxes=self.search_boxes_by_page.get(p_num, []),
+                        notes=self.notes_by_page.get(p_num, []),
+                        highlights=self.highlights_by_page.get(p_num, []),
+                    )
             else:
                 canvas.set_page_data(
                     pixmap=QPixmap(),
                     zoom=self.zoom_level,
                     unscaled_size=unscaled_size,
                 )
+
+    @Slot(int, float, str, object, list)
+    def _on_page_rendered(self, page_num: int, zoom: float, theme: str, pixmap: QPixmap, words: list):
+        task_key = (page_num, round(zoom, 2), theme)
+        self.pending_tasks.pop(task_key, None)
+
+        if not pixmap.isNull():
+            self.render_cache.put(page_num, zoom, theme, pixmap, words)
+
+        if abs(zoom - self.zoom_level) <= 0.01 and theme == self.theme:
+            for canvas in self.page_canvases:
+                if canvas.page_num == page_num:
+                    unscaled_size = self.doc_reader.get_page_size(page_num) if self.doc_reader else (600.0, 800.0)
+                    canvas.set_page_data(
+                        pixmap=pixmap,
+                        zoom=self.zoom_level,
+                        unscaled_size=unscaled_size,
+                        words=words,
+                        search_boxes=self.search_boxes_by_page.get(page_num, []),
+                        notes=self.notes_by_page.get(page_num, []),
+                        highlights=self.highlights_by_page.get(page_num, []),
+                    )
+                    break
 
     def _on_scroll_position_changed(self, value: int):
         if not self.is_continuous_scroll or not self.page_canvases:
@@ -649,7 +916,7 @@ class PDFViewerWidget(QScrollArea):
             if text.strip():
                 query = urllib.parse.quote(text.strip())
                 search_url = f"https://www.google.com/search?q={query}"
-                QDesktopServices.openUrl(QUrl(search_url))
+                open_url_in_right_half_chrome(search_url)
             self.clear_selection_and_toolbar()
 
     def next_page(self):

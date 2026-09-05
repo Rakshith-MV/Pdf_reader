@@ -131,6 +131,12 @@ class MainWindow(QMainWindow):
         self.top_bar.prev_search_match_requested.connect(self.prev_search_match)
         self.top_bar.toggle_left_panel_requested.connect(self._toggle_library_panel)
         self.top_bar.toggle_right_panel_requested.connect(self._toggle_right_sidebar)
+
+        # Synchronize Timer between FocusDashboardWidget (Home View) and TopBarWidget (Reader View)
+        focus_dash = self.home_view.focus_dashboard
+        focus_dash.timer_tick_signal.connect(self.top_bar.sync_timer_state)
+        self.top_bar.timer_button_clicked.connect(focus_dash.handle_topbar_timer_click)
+
         center_layout.addWidget(self.top_bar)
 
         self.viewer_widget = PDFViewerWidget(self.center_container)
@@ -476,4 +482,4 @@ class MainWindow(QMainWindow):
         self.position_debouncer.flush()
         if self.current_reader:
             self.current_reader.close()
-        super().closeEvent(event)
+        event.accept()

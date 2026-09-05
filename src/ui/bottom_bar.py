@@ -35,6 +35,7 @@ class BottomBarWidget(QFrame):
     toggle_left_panel_requested = Signal()
     toggle_right_panel_requested = Signal()
     home_requested = Signal()
+    timer_button_clicked = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -185,11 +186,6 @@ class BottomBarWidget(QFrame):
         self.btn_more.setMenu(self.more_menu)
         layout.addWidget(self.btn_more)
 
-        # Internal QTimer for desktop reader Study Timer
-        self.qtimer = QTimer(self)
-        self.qtimer.setInterval(1000)
-        self.qtimer.timeout.connect(self._on_timer_tick)
-
     def set_document_state(self, current_page: int, total_pages: int, zoom_level: float):
         self.total_pages = max(0, total_pages)
         if self.total_pages > 0:
@@ -226,36 +222,29 @@ class BottomBarWidget(QFrame):
         self.search_requested.emit(query)
 
     def _toggle_study_timer(self):
-        if self.timer_active:
-            self.qtimer.stop()
-            self.timer_active = False
-            self.timer_seconds_left = 0
-            self.btn_timer.setText("⏱️ Timer")
-            self.btn_timer.setStyleSheet("QPushButton { background-color: #2e7d32; color: white; font-weight: bold; }")
-            QMessageBox.information(self, "Timer Canceled", "Study session timer stopped.")
-        else:
-            mins, ok = QInputDialog.getInt(self, "Study Timer", "Set Study Timer (minutes):", 25, 1, 180)
-            if ok and mins > 0:
-                self.timer_seconds_left = mins * 60
-                self.timer_active = True
-                self.qtimer.start()
-                self._update_timer_button_label()
-                self.btn_timer.setStyleSheet("QPushButton { background-color: #c62828; color: white; font-weight: bold; }")
+        self.timer_button_clicked.emit()
 
-    def _on_timer_tick(self):
-        if self.timer_seconds_left > 0:
-            self.timer_seconds_left -= 1
-            self._update_timer_button_label()
+    def sync_timer_state(self, seconds_left: int, total_seconds: int, is_running: bool, is_paused: bool):
+        """Synchronizes TopBar Timer button display with global Focus/Study Session timer."""
+        self.timer_seconds_left = seconds_left
+        self.timer_active = is_running
+        if is_running:
+            m, s = divmod(seconds_left, 60)
+            if is_paused:
+                self.btn_timer.setText(f"⏸️ {m:02d}:{s:02d}")
+                self.btn_timer.setStyleSheet(
+                    "QPushButton { background-color: #d84315; color: white; font-weight: bold; }"
+                )
+            else:
+                self.btn_timer.setText(f"⏱️ {m:02d}:{s:02d}")
+                self.btn_timer.setStyleSheet(
+                    "QPushButton { background-color: #c62828; color: white; font-weight: bold; }"
+                )
         else:
-            self.qtimer.stop()
-            self.timer_active = False
             self.btn_timer.setText("⏱️ Timer")
-            self.btn_timer.setStyleSheet("QPushButton { background-color: #2e7d32; color: white; font-weight: bold; }")
-            QMessageBox.information(self, "Time's Up!", "⏰ Study block complete! Time for a break.")
-
-    def _update_timer_button_label(self):
-        m, s = divmod(self.timer_seconds_left, 60)
-        self.btn_timer.setText(f"⏱️ {m:02d}:{s:02d}")
+            self.btn_timer.setStyleSheet(
+                "QPushButton { background-color: #2e7d32; color: white; font-weight: bold; } QPushButton:hover { background-color: #388e3c; }"
+            )
 
     def _toggle_vlc_music(self):
         host = os.getenv("VLC_HOST", "localhost").strip() or "localhost"
