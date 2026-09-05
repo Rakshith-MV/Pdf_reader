@@ -34,6 +34,7 @@ class BottomBarWidget(QFrame):
 
     toggle_left_panel_requested = Signal()
     toggle_right_panel_requested = Signal()
+    toggle_browser_panel_requested = Signal()
     home_requested = Signal()
     timer_button_clicked = Signal()
 
@@ -165,6 +166,15 @@ class BottomBarWidget(QFrame):
         self.lbl_search_count = QLabel("")
         self.lbl_search_count.setStyleSheet("color: #aaa; font-size: 11px;")
         layout.addWidget(self.lbl_search_count)
+
+        self.btn_toggle_browser = QPushButton("🌐 Web")
+        self.btn_toggle_browser.setToolTip("Toggle Embedded Web Browser Panel (F11)")
+        self.btn_toggle_browser.setStyleSheet(
+            "QPushButton { background-color: #00796B; color: white; font-weight: bold; } "
+            "QPushButton:hover { background-color: #00897B; }"
+        )
+        self.btn_toggle_browser.clicked.connect(self.toggle_browser_panel_requested.emit)
+        layout.addWidget(self.btn_toggle_browser)
 
         self.btn_toggle_right = QPushButton("Notes 📖")
         self.btn_toggle_right.setToolTip("Toggle Right Sidebar & Notes (F10)")

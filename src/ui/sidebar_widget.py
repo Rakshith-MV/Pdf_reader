@@ -288,15 +288,18 @@ class SidebarWidget(QWidget):
 
     @Slot()
     def _on_add_note_clicked(self):
+        self.add_page_note_for_page(self.current_page)
+
+    def add_page_note_for_page(self, page_num: int):
         if not self.current_doc_id:
             return
         note_text, ok = QInputDialog.getMultiLineText(
-            self, "Add Page Note", f"Enter note for Page {self.current_page + 1}:"
+            self, "Add Page Note", f"Enter note for Page {page_num + 1}:"
         )
         if ok and note_text.strip():
             self.db_manager.add_note(
                 doc_id=self.current_doc_id,
-                page_number=self.current_page,
+                page_number=page_num,
                 note_text=note_text.strip(),
             )
             self.refresh_notes()

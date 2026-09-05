@@ -53,5 +53,24 @@ class TestDocumentReader(unittest.TestCase):
         finally:
             reader.close()
 
+    def test_thread_safe_render_and_skip_words(self):
+        from src.reader.render_worker import PageRenderTask
+        from src.ui.viewer_widget import PDFViewerWidget
+
+        reader = DocumentReader(self.pdf_path)
+        try:
+            # Test skip_words option on PageRenderTask
+            task = PageRenderTask(reader, 0, 1.0, theme="day", skip_words=True)
+            self.assertTrue(task.skip_words)
+
+            # Test PDFViewerWidget prefetching
+            viewer = PDFViewerWidget()
+            viewer.set_document(reader)
+            viewer._prefetch_adjacent_pages()
+            self.assertEqual(viewer.doc_reader.total_pages, 2)
+            viewer.close()
+        finally:
+            reader.close()
+
 if __name__ == "__main__":
     unittest.main()

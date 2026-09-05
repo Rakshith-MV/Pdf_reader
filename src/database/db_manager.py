@@ -348,6 +348,23 @@ class DatabaseManager:
         finally:
             conn.close()
 
+    def get_study_lists_for_document(self, doc_id: int) -> List[Dict[str, Any]]:
+        conn = self._get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT sl.* FROM study_lists sl
+                JOIN study_list_items sli ON sl.id = sli.study_list_id
+                WHERE sli.document_id = ?
+                ORDER BY sl.name ASC
+                """,
+                (doc_id,),
+            )
+            return [dict(row) for row in cur.fetchall()]
+        finally:
+            conn.close()
+
     def remove_document_from_study_list(self, study_list_id: int, doc_id: int):
         conn = self._get_connection()
         try:

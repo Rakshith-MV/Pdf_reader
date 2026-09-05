@@ -121,5 +121,48 @@ class TestSelectionAndBookmarks(unittest.TestCase):
         focus_dash.close()
         top_bar.close()
 
+    def test_math_notes_editor_single_section_toggling(self):
+        editor = MathNotesEditor(self.db)
+        # Starts in preview mode (stack index 0)
+        self.assertEqual(editor.stack.currentIndex(), 0)
+        self.assertEqual(editor.btn_toggle_mode.text(), "✏️ Edit Notes")
+
+        # Switch to edit mode
+        editor.switch_to_edit_mode()
+        self.assertEqual(editor.stack.currentIndex(), 1)
+        self.assertEqual(editor.btn_toggle_mode.text(), "✓ Done (Render Math)")
+
+        # Switch back to preview mode
+        editor.switch_to_preview_mode()
+        self.assertEqual(editor.stack.currentIndex(), 0)
+        self.assertEqual(editor.btn_toggle_mode.text(), "✏️ Edit Notes")
+
+    def test_page_canvas_context_menu_signals(self):
+        canvas = PageCanvas(3)  # Page 4 (0-indexed 3)
+        bm_emitted = []
+        note_emitted = []
+        canvas.bookmark_page_requested.connect(lambda p: bm_emitted.append(p))
+        canvas.page_note_requested.connect(lambda p: note_emitted.append(p))
+
+        canvas.bookmark_page_requested.emit(canvas.page_num)
+        canvas.page_note_requested.emit(canvas.page_num)
+
+    def test_study_list_bar_widget(self):
+        from src.ui.study_list_bar import StudyListBarWidget
+        bar = StudyListBarWidget()
+        docs = [
+            {"id": 1, "title": "Doc A", "file_path": "/path/a.pdf"},
+            {"id": 2, "title": "Doc B", "file_path": "/path/b.pdf"},
+        ]
+        bar.set_study_list("Math 101", docs, current_doc_id=1)
+        self.assertTrue(bar.isVisible())
+        self.assertEqual(len(bar.documents), 2)
+
+        requested_paths = []
+        bar.open_document_requested.connect(lambda p: requested_paths.append(p))
+        bar.open_document_requested.emit("/path/b.pdf")
+        self.assertEqual(requested_paths, ["/path/b.pdf"])
+
+
 if __name__ == "__main__":
     unittest.main()

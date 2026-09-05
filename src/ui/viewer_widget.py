@@ -175,6 +175,8 @@ class PageCanvas(QWidget):
     text_selected = Signal(int, str, list)
     clear_selection_signal = Signal()
     add_highlight_requested = Signal(int, list, str, str, str, str)
+    bookmark_page_requested = Signal(int)
+    page_note_requested = Signal(int)
 
     def __init__(self, page_num: int = 0, parent=None):
         super().__init__(parent)
@@ -204,6 +206,17 @@ class PageCanvas(QWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setStyleSheet("PageCanvas { background-color: white; border: 1px solid #1a1a1a; }")
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        bm_action = menu.addAction(f"🔖 Bookmark Page {self.page_num + 1}")
+        note_action = menu.addAction(f"📝 Add Note to Page {self.page_num + 1}")
+
+        action = menu.exec(event.globalPos())
+        if action == bm_action:
+            self.bookmark_page_requested.emit(self.page_num)
+        elif action == note_action:
+            self.page_note_requested.emit(self.page_num)
 
     def clear_selection(self):
         self.selected_words = []
@@ -601,6 +614,8 @@ class PDFViewerWidget(QScrollArea):
     zoom_changed = Signal(float)
     add_highlight_signal = Signal(int, list, str, str, str, str)
     region_note_requested = Signal(int, float, float, float, float)
+    bookmark_page_requested = Signal(int)
+    page_note_requested = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -686,6 +701,8 @@ class PDFViewerWidget(QScrollArea):
                 canvas.region_selected.connect(self.region_note_requested.emit)
                 canvas.text_selected.connect(self._on_text_selected)
                 canvas.clear_selection_signal.connect(self.clear_selection_and_toolbar)
+                canvas.bookmark_page_requested.connect(self.bookmark_page_requested.emit)
+                canvas.page_note_requested.connect(self.page_note_requested.emit)
                 self.container_layout.addWidget(canvas)
                 self.page_canvases.append(canvas)
         else:
@@ -693,6 +710,8 @@ class PDFViewerWidget(QScrollArea):
             canvas.region_selected.connect(self.region_note_requested.emit)
             canvas.text_selected.connect(self._on_text_selected)
             canvas.clear_selection_signal.connect(self.clear_selection_and_toolbar)
+            canvas.bookmark_page_requested.connect(self.bookmark_page_requested.emit)
+            canvas.page_note_requested.connect(self.page_note_requested.emit)
             self.container_layout.addWidget(canvas)
             self.page_canvases.append(canvas)
 
@@ -728,8 +747,8 @@ class PDFViewerWidget(QScrollArea):
             self.set_page(self.current_page)
 
     def set_zoom(self, zoom: float):
-        zoom = max(0.2, min(5.0, zoom))
-        if abs(zoom - self.zoom_level) > 0.01:
+        zoom = round(max(0.2, min(5.0, zoom)), 2)
+        if abs(zoom - self.zoom_level) > 0.009:
             self.zoom_level = zoom
             self.update_view()
             self.zoom_changed.emit(self.zoom_level)
@@ -807,7 +826,10 @@ class PDFViewerWidget(QScrollArea):
                     task_key = (p_num, round(self.zoom_level, 2), self.theme)
                     if task_key not in self.pending_tasks:
                         self.pending_tasks[task_key] = True
-                        task = PageRenderTask(self.doc_reader, p_num, self.zoom_level, self.theme)
+                        has_words = self.render_cache.get_words(p_num) is not None
+                        task = PageRenderTask(
+                            self.doc_reader, p_num, self.zoom_level, self.theme, skip_words=has_words
+                        )
                         task.signals.render_complete.connect(self._on_page_rendered)
                         QThreadPool.globalInstance().start(task)
 
@@ -828,10 +850,38 @@ class PDFViewerWidget(QScrollArea):
                     unscaled_size=unscaled_size,
                 )
 
+        # Trigger background prefetching for adjacent pages ahead of scroll direction
+        self._prefetch_adjacent_pages()
+
+    def _prefetch_adjacent_pages(self):
+        """Prefetches surrounding pages (current_page + 1, + 2, - 1) into RenderCache off main thread."""
+        if not self.doc_reader or self.doc_reader.total_pages == 0:
+            return
+
+        surrounding_pages = [self.current_page + 1, self.current_page + 2, self.current_page - 1]
+        for p_num in surrounding_pages:
+            if 0 <= p_num < self.doc_reader.total_pages:
+                cached_item = self.render_cache.get(p_num, self.zoom_level, self.theme)
+                if cached_item is None:
+                    task_key = (p_num, round(self.zoom_level, 2), self.theme)
+                    if task_key not in self.pending_tasks:
+                        self.pending_tasks[task_key] = True
+                        has_words = self.render_cache.get_words(p_num) is not None
+                        task = PageRenderTask(
+                            self.doc_reader, p_num, self.zoom_level, self.theme, skip_words=has_words
+                        )
+                        task.signals.render_complete.connect(self._on_page_rendered)
+                        QThreadPool.globalInstance().start(task)
+
     @Slot(int, float, str, object, list)
     def _on_page_rendered(self, page_num: int, zoom: float, theme: str, pixmap: QPixmap, words: list):
         task_key = (page_num, round(zoom, 2), theme)
         self.pending_tasks.pop(task_key, None)
+
+        if not words:
+            cached_words = self.render_cache.get_words(page_num)
+            if cached_words:
+                words = cached_words
 
         if not pixmap.isNull():
             self.render_cache.put(page_num, zoom, theme, pixmap, words)

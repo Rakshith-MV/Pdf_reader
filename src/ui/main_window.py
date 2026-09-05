@@ -27,6 +27,8 @@ from src.ui.viewer_widget import PDFViewerWidget
 from src.ui.sidebar_widget import SidebarWidget
 from src.ui.bottom_bar import BottomBarWidget, TopBarWidget
 from src.ui.home_widget import HomeWidget
+from src.ui.study_list_bar import StudyListBarWidget
+from src.ui.browser_widget import WebBrowserWidget
 
 DARK_STYLESHEET = """
 QMainWindow, QWidget {
@@ -131,6 +133,7 @@ class MainWindow(QMainWindow):
         self.top_bar.prev_search_match_requested.connect(self.prev_search_match)
         self.top_bar.toggle_left_panel_requested.connect(self._toggle_library_panel)
         self.top_bar.toggle_right_panel_requested.connect(self._toggle_right_sidebar)
+        self.top_bar.toggle_browser_panel_requested.connect(self._toggle_browser_panel)
 
         # Synchronize Timer between FocusDashboardWidget (Home View) and TopBarWidget (Reader View)
         focus_dash = self.home_view.focus_dashboard
@@ -144,7 +147,17 @@ class MainWindow(QMainWindow):
         self.viewer_widget.zoom_changed.connect(self._on_zoom_changed)
         self.viewer_widget.region_note_requested.connect(self._on_region_note_requested)
         self.viewer_widget.add_highlight_signal.connect(self._on_add_highlight_requested)
+        self.viewer_widget.bookmark_page_requested.connect(self._on_bookmark_page_requested)
+        self.viewer_widget.page_note_requested.connect(self._on_page_note_requested)
         center_layout.addWidget(self.viewer_widget)
+
+        # Bottom Study List PDF Bar
+        self.study_list_bar = StudyListBarWidget(self.center_container)
+        self.study_list_bar.open_document_requested.connect(self.open_document)
+        self.study_list_bar.next_pdf_requested.connect(self._next_study_list_pdf)
+        self.study_list_bar.prev_pdf_requested.connect(self._prev_study_list_pdf)
+        self.study_list_bar.setVisible(False)
+        center_layout.addWidget(self.study_list_bar)
 
         self.reader_splitter.addWidget(self.center_container)
 
@@ -156,7 +169,13 @@ class MainWindow(QMainWindow):
         self.sidebar_widget.toggle_panel_requested.connect(self._toggle_right_sidebar)
         self.reader_splitter.addWidget(self.sidebar_widget)
 
-        self.reader_splitter.setSizes([300, 720, 300])
+        # 4. Embedded Web Browser Panel (ChatGPT-style split view)
+        self.browser_widget = WebBrowserWidget(self.reader_splitter)
+        self.browser_widget.toggle_panel_requested.connect(self._toggle_browser_panel)
+        self.browser_widget.setVisible(False)
+        self.reader_splitter.addWidget(self.browser_widget)
+
+        self.reader_splitter.setSizes([260, 600, 260, 450])
         self.main_stack.addWidget(self.reader_splitter)
 
         root_layout.addWidget(self.main_stack)
@@ -180,6 +199,7 @@ class MainWindow(QMainWindow):
 
         self.act_toggle_lib = QAction("Toggle &Library Panel", self, shortcut="F9", triggered=self._toggle_library_panel)
         self.act_toggle_sidebar = QAction("Toggle Right &Sidebar", self, shortcut="F10", triggered=self._toggle_right_sidebar)
+        self.act_toggle_browser = QAction("Toggle Web &Browser Panel", self, shortcut="F11", triggered=self._toggle_browser_panel)
         self.act_continuous = QAction("Continuous &Vertical Scroll", self, checkable=True, triggered=self._toggle_continuous_scroll)
         self.act_continuous.setChecked(True)
 
@@ -209,6 +229,7 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.act_home)
         view_menu.addAction(self.act_toggle_lib)
         view_menu.addAction(self.act_toggle_sidebar)
+        view_menu.addAction(self.act_toggle_browser)
         view_menu.addAction(self.act_continuous)
         view_menu.addSeparator()
 
@@ -220,6 +241,7 @@ class MainWindow(QMainWindow):
         theme_menu.addAction(self.act_theme_sepia_contrast)
 
         tools_menu = menubar.addMenu("&Tools")
+        tools_menu.addAction(self.act_toggle_browser)
         tools_menu.addAction(self.act_continuous)
         tools_theme_menu = tools_menu.addMenu("Paper Color Themes")
         tools_theme_menu.addAction(self.act_theme_day)
@@ -238,6 +260,10 @@ class MainWindow(QMainWindow):
         more.addAction(self.act_home)
         more.addAction(self.act_open)
         more.addAction(self.act_scan)
+        more.addSeparator()
+        more.addAction(self.act_toggle_browser)
+        more.addAction(self.act_toggle_lib)
+        more.addAction(self.act_toggle_sidebar)
         more.addSeparator()
         more_themes = more.addMenu("🎨 Paper Color Themes")
         more_themes.addAction(self.act_theme_day)
@@ -260,6 +286,9 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("PgDown"), self, self.viewer_widget.next_page)
         QShortcut(QKeySequence("Ctrl+1"), self, self.viewer_widget.fit_width)
         QShortcut(QKeySequence("Ctrl+2"), self, self.viewer_widget.fit_page)
+        QShortcut(QKeySequence("F11"), self, self._toggle_browser_panel)
+        QShortcut(QKeySequence("Ctrl+Tab"), self, self._next_study_list_pdf)
+        QShortcut(QKeySequence("Ctrl+Shift+Tab"), self, self._prev_study_list_pdf)
 
     def _load_initial_document(self):
         # Always start app directly at the Home page dashboard!
@@ -307,11 +336,49 @@ class MainWindow(QMainWindow):
             self.library_view.refresh_library()
             self.home_view.refresh_home()
 
+            # Update Study List Bar if document belongs to a study list
+            study_lists = self.db_manager.get_study_lists_for_document(self.current_doc_id)
+            if study_lists:
+                sl = study_lists[0]
+                sl_docs = self.db_manager.get_study_list_documents(sl["id"])
+                self.study_list_bar.set_study_list(sl["name"], sl_docs, self.current_doc_id)
+                self.sidebar_widget.math_notes_tab.load_study_list_notes(sl["id"])
+            else:
+                self.study_list_bar.setVisible(False)
+
             # Switch to Reader View (Stack Index 1)
             self._show_reader_view()
 
         except Exception as e:
             QMessageBox.critical(self, "Error Opening File", f"Failed to load document:\n{str(e)}")
+
+    def _toggle_fullscreen(self):
+        if self.isFullScreen():
+            self.showNormal()
+            self.top_bar.setVisible(True)
+        else:
+            self.showFullScreen()
+            self.top_bar.setVisible(False)
+
+    def _next_study_list_pdf(self):
+        if not self.study_list_bar.documents or self.current_doc_id is None:
+            return
+        ids = [d["id"] for d in self.study_list_bar.documents]
+        if self.current_doc_id in ids:
+            curr_idx = ids.index(self.current_doc_id)
+            next_idx = (curr_idx + 1) % len(ids)
+            next_path = self.study_list_bar.documents[next_idx]["file_path"]
+            self.open_document(next_path)
+
+    def _prev_study_list_pdf(self):
+        if not self.study_list_bar.documents or self.current_doc_id is None:
+            return
+        ids = [d["id"] for d in self.study_list_bar.documents]
+        if self.current_doc_id in ids:
+            curr_idx = ids.index(self.current_doc_id)
+            prev_idx = (curr_idx - 1) % len(ids)
+            prev_path = self.study_list_bar.documents[prev_idx]["file_path"]
+            self.open_document(prev_path)
 
     def _show_home_view(self):
         self.home_view.refresh_home()
@@ -354,6 +421,26 @@ class MainWindow(QMainWindow):
     def _on_region_note_requested(self, page_num: int, x: float, y: float, w: float, h: float):
         self.sidebar_widget.tabs.setCurrentIndex(2)
         self.sidebar_widget.add_region_note(page_num, x, y, w, h)
+
+    @Slot(int)
+    def _on_bookmark_page_requested(self, page_num: int):
+        if not self.current_doc_id:
+            return
+        bm_label = f"Bookmark Page {page_num + 1}"
+        self.db_manager.add_bookmark(self.current_doc_id, page_num, bm_label)
+        self.sidebar_widget.refresh_bookmarks()
+        self.library_view.refresh_library()
+        self.sidebar_widget.math_notes_tab.insert_bookmark_link(page_num, bm_label)
+        self.statusBar().showMessage(f"🔖 Bookmarked Page {page_num + 1}", 3000)
+
+    @Slot(int)
+    def _on_page_note_requested(self, page_num: int):
+        if not self.current_doc_id:
+            return
+        if not self.sidebar_widget.isVisible():
+            self._toggle_right_sidebar()
+        self.sidebar_widget.tabs.setCurrentIndex(2)  # Notes tab
+        self.sidebar_widget.add_page_note_for_page(page_num)
 
     @Slot(int, list, str, str, str, str)
     def _on_add_highlight_requested(
@@ -416,7 +503,15 @@ class MainWindow(QMainWindow):
         is_vis = self.sidebar_widget.isVisible()
         self.sidebar_widget.setVisible(not is_vis)
         if not is_vis:
-            self.reader_splitter.setSizes([300, 720, 300])
+            self.reader_splitter.setSizes([260, 600, 260, 450])
+
+    def _toggle_browser_panel(self):
+        if self.main_stack.currentIndex() == 0 and self.current_reader:
+            self._show_reader_view()
+        is_vis = self.browser_widget.isVisible()
+        self.browser_widget.setVisible(not is_vis)
+        if not is_vis:
+            self.reader_splitter.setSizes([260, 600, 260, 450])
 
     @Slot(str)
     def perform_search(self, query: str):

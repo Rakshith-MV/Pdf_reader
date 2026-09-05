@@ -1,0 +1,1197 @@
+[33mcommit 1ed19aa5c2b772673b90cf94c0befe0e76968423[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m
+Author: Rakshith <werakshith@gmail.com>
+Date:   Sat Sep 5 05:46:21 2026 +0530
+
+    Faster
+
+[1mdiff --git a/bridge_bot.py b/bridge_bot.py[m
+[1mindex b57d2d6..10ab0b8 100644[m
+[1m--- a/bridge_bot.py[m
+[1m+++ b/bridge_bot.py[m
+[36m@@ -39,8 +39,9 @@[m [masync def check_auth(update: Update) -> bool:[m
+ # =====================================================================[m
+ [m
+ def capture_window_screenshot(target_title: str) -> Tuple[Optional[str], Optional[str]]:[m
+[31m-    """Finds target window, restores if minimized, screenshots via mss."""[m
+[31m-    windows = gw.getWindowsWithTitle(target_title)[m
+[32m+[m[32m    """Finds target window by case-insensitive title substring, restores if minimized, screenshots via mss."""[m
+[32m+[m[32m    target_lower = target_title.lower()[m
+[32m+[m[32m    windows = [w for w in gw.getAllWindows() if w.title and target_lower in w.title.lower()][m
+     if not windows:[m
+         return None, f"No window matching '{target_title}' was found."[m
+ [m
+[36m@@ -48,6 +49,8 @@[m [mdef capture_window_screenshot(target_title: str) -> Tuple[Optional[str], Optiona[m
+     if win.isMinimized:[m
+         try:[m
+             win.restore()[m
+[32m+[m[32m            import time[m
+[32m+[m[32m            time.sleep(0.2)[m
+         except Exception:[m
+             pass[m
+ [m
+[36m@@ -165,7 +168,7 @@[m [masync def timer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):[m
+     delay_seconds = minutes * 60.0[m
+     context.job_queue.run_once([m
+         timer_callback,[m
+[31m-        due=delay_seconds,[m
+[32m+[m[32m        when=delay_seconds,[m
+         chat_id=chat_id,[m
+         name=str(chat_id),[m
+         data={"type": "timer"},[m
+[36m@@ -201,7 +204,7 @@[m [masync def pomodoro_callback(context: ContextTypes.DEFAULT_TYPE):[m
+             }[m
+             context.job_queue.run_once([m
+                 pomodoro_callback,[m
+[31m-                due=break_min * 60.0,[m
+[32m+[m[32m                when=break_min * 60.0,[m
+                 chat_id=chat_id,[m
+                 name=str(chat_id),[m
+                 data=next_data,[m
+[36m@@ -227,7 +230,7 @@[m [masync def pomodoro_callback(context: ContextTypes.DEFAULT_TYPE):[m
+         }[m
+         context.job_queue.run_once([m
+             pomodoro_callback,[m
+[31m-            due=work_min * 60.0,[m
+[32m+[m[32m            when=work_min * 60.0,[m
+             chat_id=chat_id,[m
+             name=str(chat_id),[m
+             data=next_data,[m
+[36m@@ -268,7 +271,7 @@[m [masync def pomodoro_command(update: Update, context: ContextTypes.DEFAULT_TYPE):[m
+     }[m
+     context.job_queue.run_once([m
+         pomodoro_callback,[m
+[31m-        due=work_min * 60.0,[m
+[32m+[m[32m        when=work_min * 60.0,[m
+         chat_id=chat_id,[m
+         name=str(chat_id),[m
+         data=data,[m
+[1mdiff --git a/bridge_bot_task.xml b/bridge_bot_task.xml[m
+[1mnew file mode 100644[m
+[1mindex 0000000..54b12f0[m
+[1m--- /dev/null[m
+[1m+++ b/bridge_bot_task.xml[m
+[36m@@ -0,0 +1,42 @@[m
+[32m+[m[32m<?xml version="1.0" encoding="UTF-16"?>[m
+[32m+[m[32m<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">[m
+[32m+[m[32m  <RegistrationInfo>[m
+[32m+[m[32m    <Date>2026-09-05T00:00:00</Date>[m
+[32m+[m[32m    <Author>ReadEra Desktop</Author>[m
+[32m+[m[32m    <Description>Background Telegram Bridge Bot Service for Remote Window Description and Control</Description>[m
+[32m+[m[32m  </RegistrationInfo>[m
+[32m+[m[32m  <Triggers>[m
+[32m+[m[32m    <LogonTrigger>[m
+[32m+[m[32m      <Enabled>true</Enabled>[m
+[32m+[m[32m    </LogonTrigger>[m
+[32m+[m[32m  </Triggers>[m
+[32m+[m[32m  <Principals>[m
+[32m+[m[32m    <Principal id="Author">[m
+[32m+[m[32m      <LogonType>InteractiveToken</LogonType>[m
+[32m+[m[32m      <RunLevel>HighestAvailable</RunLevel>[m
+[32m+[m[32m    </Principal>[m
+[32m+[m[32m  </Principals>[m
+[32m+[m[32m  <Settings>[m
+[32m+[m[32m    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>[m
+[32m+[m[32m    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>[m
+[32m+[m[32m    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>[m
+[32m+[m[32m    <AllowHardTerminate>true</AllowHardTerminate>[m
+[32m+[m[32m    <StartWhenAvailable>true</StartWhenAvailable>[m
+[32m+[m[32m    <RunOnlyIfNetworkAvailable>true</RunOnlyIfNetworkAvailable>[m
+[32m+[m[32m    <IdleSettings>[m
+[32m+[m[32m      <StopOnIdleEnd>false</StopOnIdleEnd>[m
+[32m+[m[32m      <RestartOnIdle>false</RestartOnIdle>[m
+[32m+[m[32m    </IdleSettings>[m
+[32m+[m[32m    <AllowStartOnDemand>true</AllowStartOnDemand>[m
+[32m+[m[32m    <Enabled>true</Enabled>[m
+[32m+[m[32m    <Hidden>true</Hidden>[m
+[32m+[m[32m    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>[m
+[32m+[m[32m    <Priority>7</Priority>[m
+[32m+[m[32m  </Settings>[m
+[32m+[m[32m  <Actions Context="Author">[m
+[32m+[m[32m    <Exec>[m
+[32m+[m[32m      <Command>pythonw.exe</Command>[m
+[32m+[m[32m      <Arguments>C:\work\Readera software\bridge_bot.py</Arguments>[m
+[32m+[m[32m    </Exec>[m
+[32m+[m[32m  </Actions>[m
+[32m+[m[32m</Task>[m
+[1mdiff --git a/register_task.bat b/register_task.bat[m
+[1mnew file mode 100644[m
+[1mindex 0000000..cdb5a60[m
+[1m--- /dev/null[m
+[1m+++ b/register_task.bat[m
+[36m@@ -0,0 +1,15 @@[m
+[32m+[m[32m@echo off[m
+[32m+[m[32msetlocal[m
+[32m+[m[32mset SCRIPT_DIR=%~dp0[m
+[32m+[m[32mset SCRIPT_PATH=%SCRIPT_DIR%bridge_bot.py[m
+[32m+[m
+[32m+[m[32mecho Registering ReadEra Telegram Bridge Bot as a Windows Task Scheduler service (runs hidden at logon)...[m
+[32m+[m[32mschtasks /create /tn "ReadEraBridgeBot" /tr "pythonw.exe \"%SCRIPT_PATH%\"" /sc onlogon /rl HIGHEST /f[m
+[32m+[m
+[32m+[m[32mif %ERRORLEVEL% EQU 0 ([m
+[32m+[m[32m    echo [SUCCESS] Task "ReadEraBridgeBot" created successfully![m
+[32m+[m[32m    echo It will automatically start silently in the background when you log on.[m
+[32m+[m[32m) else ([m
+[32m+[m[32m    echo [ERROR] Failed to register task. Make sure you run this script as Administrator.[m
+[32m+[m[32m)[m
+[32m+[m[32mpause[m
+[1mdiff --git a/requirements.txt b/requirements.txt[m
+[1mindex 6477730..2e00fe6 100644[m
+[1m--- a/requirements.txt[m
+[1m+++ b/requirements.txt[m
+[36m@@ -5,3 +5,7 @@[m [mmss>=9.0.0[m
+ pygetwindow>=0.0.9[m
+ Pillow>=10.0.0[m
+ requests>=2.31.0[m
+[32m+[m[32mPySide6>=6.5.0[m
+[32m+[m[32mPyMuPDF>=1.22.0[m
+[32m+[m[32mpyinstaller>=6.0.0[m
+[41m+[m
+[1mdiff --git a/src/reader/render_cache.py b/src/reader/render_cache.py[m
+[1mindex 26e0aa2..ecf8f44 100644[m
+[1m--- a/src/reader/render_cache.py[m
+[1m+++ b/src/reader/render_cache.py[m
+[36m@@ -1,39 +1,39 @@[m
+ from collections import OrderedDict[m
+[31m-from typing import Optional, Tuple[m
+[32m+[m[32mfrom typing import Optional, Tuple, List, Dict, Any[m
+ from PySide6.QtGui import QPixmap[m
+ from src.reader.document import DocumentReader[m
+ [m
+ class RenderCache:[m
+[31m-    """LRU render cache for PyMuPDF rendered pages with theme support."""[m
+[32m+[m[32m    """LRU render cache for PyMuPDF rendered pages and word lists with theme support."""[m
+ [m
+[31m-    def __init__(self, max_entries: int = 15):[m
+[32m+[m[32m    def __init__(self, max_entries: int = 25):[m
+         self.max_entries = max_entries[m
+[31m-        self.cache: OrderedDict[Tuple[int, float, str], QPixmap] = OrderedDict()[m
+[32m+[m[32m        self.cache: OrderedDict[Tuple[int, float, str], Tuple[QPixmap, List[Any]]] = OrderedDict()[m
+[32m+[m[32m        self.words_cache: Dict[int, List[Any]] = {}[m
+ [m
+[31m-    def get(self, page_number: int, zoom: float, theme: str = "day") -> Optional[QPixmap]:[m
+[32m+[m[32m    def get(self, page_number: int, zoom: float, theme: str = "day") -> Optional[Tuple[QPixmap, List[Any]]]:[m
+         key = (page_number, round(zoom, 2), theme)[m
+         if key in self.cache:[m
+             self.cache.move_to_end(key)[m
+             return self.cache[key][m
+         return None[m
+ [m
+[31m-    def put(self, page_number: int, zoom: float, theme: str, pixmap: QPixmap):[m
+[32m+[m[32m    def put(self, page_number: int, zoom: float, theme: str, pixmap: QPixmap, words: List[Any]):[m
+         key = (page_number, round(zoom, 2), theme)[m
+         if key in self.cache:[m
+             self.cache.move_to_end(key)[m
+[32m+[m[32m            self.cache[key] = (pixmap, words)[m
+         else:[m
+             if len(self.cache) >= self.max_entries:[m
+                 self.cache.popitem(last=False)[m
+[31m-            self.cache[key] = pixmap[m
+[32m+[m[32m            self.cache[key] = (pixmap, words)[m
+ [m
+[31m-    def prefetch_surrounding(self, doc_reader: DocumentReader, current_page: int, zoom: float, theme: str = "day"):[m
+[31m-        """Prefetches pages current_page - 1 and current_page + 1."""[m
+[31m-        for p in (current_page - 1, current_page + 1):[m
+[31m-            if 0 <= p < doc_reader.total_pages:[m
+[31m-                key = (p, round(zoom, 2), theme)[m
+[31m-                if key not in self.cache:[m
+[31m-                    pixmap = doc_reader.render_page(p, zoom, theme=theme)[m
+[31m-                    self.put(p, zoom, theme, pixmap)[m
+[32m+[m[32m        if words:[m
+[32m+[m[32m            self.words_cache[page_number] = words[m
+[32m+[m
+[32m+[m[32m    def get_words(self, page_number: int) -> Optional[List[Any]]:[m
+[32m+[m[32m        return self.words_cache.get(page_number)[m
+ [m
+     def clear(self):[m
+         self.cache.clear()[m
+[32m+[m[32m        self.words_cache.clear()[m
+[1mdiff --git a/src/reader/render_worker.py b/src/reader/render_worker.py[m
+[1mnew file mode 100644[m
+[1mindex 0000000..ba69482[m
+[1m--- /dev/null[m
+[1m+++ b/src/reader/render_worker.py[m
+[36m@@ -0,0 +1,34 @@[m
+[32m+[m[32mfrom typing import List, Tuple, Dict, Any, Optional[m
+[32m+[m[32mfrom PySide6.QtCore import QRunnable, QObject, Signal, Slot[m
+[32m+[m[32mfrom PySide6.QtGui import QPixmap[m
+[32m+[m[32mfrom src.reader.document import DocumentReader[m
+[32m+[m
+[32m+[m
+[32m+[m[32mclass PageRenderSignals(QObject):[m
+[32m+[m[32m    """Signals for background page rendering completed tasks."""[m
+[32m+[m[32m    render_complete = Signal(int, float, str, object, list)  # page_num, zoom, theme, pixmap, words[m
+[32m+[m
+[32m+[m
+[32m+[m[32mclass PageRenderTask(QRunnable):[m
+[32m+[m[32m    """[m
+[32m+[m[32m    Background worker task rendering PDF page pixmap and extracting word lists off the Qt main UI thread.[m
+[32m+[m[32m    """[m
+[32m+[m
+[32m+[m[32m    def __init__(self, doc_reader: DocumentReader, page_num: int, zoom: float, theme: str = "day"):[m
+[32m+[m[32m        super().__init__()[m
+[32m+[m[32m        self.doc_reader = doc_reader[m
+[32m+[m[32m        self.page_num = page_num[m
+[32m+[m[32m        self.zoom = zoom[m
+[32m+[m[32m        self.theme = theme[m
+[32m+[m[32m        self.signals = PageRenderSignals()[m
+[32m+[m[32m        self.setAutoDelete(True)[m
+[32m+[m
+[32m+[m[32m    @Slot()[m
+[32m+[m[32m    def run(self):[m
+[32m+[m[32m        try:[m
+[32m+[m[32m            pixmap = self.doc_reader.render_page(self.page_num, self.zoom, theme=self.theme)[m
+[32m+[m[32m            words = self.doc_reader.get_words(self.page_num)[m
+[32m+[m[32m            self.signals.render_complete.emit(self.page_num, self.zoom, self.theme, pixmap, words)[m
+[32m+[m[32m        except Exception:[m
+[32m+[m[32m            # Emit empty fallback pixmap and words if page rendering fails or is interrupted[m
+[32m+[m[32m            self.signals.render_complete.emit(self.page_num, self.zoom, self.theme, QPixmap(), [])[m
+[1mdiff --git a/src/ui/bottom_bar.py b/src/ui/bottom_bar.py[m
+[1mindex 68a1553..bf6ec07 100644[m
+[1m--- a/src/ui/bottom_bar.py[m
+[1m+++ b/src/ui/bottom_bar.py[m
+[36m@@ -35,6 +35,7 @@[m [mclass BottomBarWidget(QFrame):[m
+     toggle_left_panel_requested = Signal()[m
+     toggle_right_panel_requested = Signal()[m
+     home_requested = Signal()[m
+[32m+[m[32m    timer_button_clicked = Signal()[m
+ [m
+     def __init__(self, parent=None):[m
+         super().__init__(parent)[m
+[36m@@ -185,11 +186,6 @@[m [mclass BottomBarWidget(QFrame):[m
+         self.btn_more.setMenu(self.more_menu)[m
+         layout.addWidget(self.btn_more)[m
+ [m
+[31m-        # Internal QTimer for desktop reader Study Timer[m
+[31m-        self.qtimer = QTimer(self)[m
+[31m-        self.qtimer.setInterval(1000)[m
+[31m-        self.qtimer.timeout.connect(self._on_timer_tick)[m
+[31m-[m
+     def set_document_state(self, current_page: int, total_pages: int, zoom_level: float):[m
+         self.total_pages = max(0, total_pages)[m
+         if self.total_pages > 0:[m
+[36m@@ -226,36 +222,29 @@[m [mclass BottomBarWidget(QFrame):[m
+         self.search_requested.emit(query)[m
+ [m
+     def _toggle_study_timer(self):[m
+[31m-        if self.timer_active:[m
+[31m-            self.qtimer.stop()[m
+[31m-            self.timer_active = False[m
+[31m-            self.timer_seconds_left = 0[m
+[31m-            self.btn_timer.setText("⏱️ Timer")[m
+[31m-            self.btn_timer.setStyleSheet("QPushButton { background-color: #2e7d32; color: white; font-weight: bold; }")[m
+[31m-            QMessageBox.information(self, "Timer Canceled", "Study session timer stopped.")[m
+[31m-        else:[m
+[31m-            mins, ok = QInputDialog.getInt(self, "Study Timer", "Set Study Timer (minutes):", 25, 1, 180)[m
+[31m-            if ok and mins > 0:[m
+[31m-                self.timer_seconds_left = mins * 60[m
+[31m-                self.timer_active = True[m
+[31m-                self.qtimer.start()[m
+[31m-                self._update_timer_button_label()[m
+[31m-                self.btn_timer.setStyleSheet("QPushButton { background-color: #c62828; color: white; font-weight: bold; }")[m
+[31m-[m
+[31m-    def _on_timer_tick(self):[m
+[31m-        if self.timer_seconds_left > 0:[m
+[31m-            self.timer_seconds_left -= 1[m
+[31m-            self._update_timer_button_label()[m
+[32m+[m[32m        self.timer_button_clicked.emit()[m
+[32m+[m
+[32m+[m[32m    def sync_timer_state(self, seconds_left: int, total_seconds: int, is_running: bool, is_paused: bool):[m
+[32m+[m[32m        """Synchronizes TopBar Timer button display with global Focus/Study Session timer."""[m
+[32m+[m[32m        self.timer_seconds_left = seconds_left[m
+[32m+[m[32m        self.timer_active = is_running[m
+[32m+[m[32m        if is_running:[m
+[32m+[m[32m            m, s = divmod(seconds_left, 60)[m
+[32m+[m[32m            if is_paused:[m
+[32m+[m[32m                self.btn_timer.setText(f"⏸️ {m:02d}:{s:02d}")[m
+[32m+[m[32m                self.btn_timer.setStyleSheet([m
+[32m+[m[32m                    "QPushButton { background-color: #d84315; color: white; font-weight: bold; }"[m
+[32m+[m[32m                )[m
+[32m+[m[32m            else:[m
+[32m+[m[32m                self.btn_timer.setText(f"⏱️ {m:02d}:{s:02d}")[m
+[32m+[m[32m                self.btn_timer.setStyleSheet([m
+[32m+[m[32m                    "QPushButton { background-color: #c62828; color: white; font-weight: bold; }"[m
+[32m+[m[32m                )[m
+         else:[m
+[31m-            self.qtimer.stop()[m
+[31m-            self.timer_active = False[m
+             self.btn_timer.setText("⏱️ Timer")[m
+[31m-            self.btn_timer.setStyleSheet("QPushButton { background-color: #2e7d32; color: white; font-weight: bold; }")[m
+[31m-            QMessageBox.information(self, "Time's Up!", "⏰ Study block complete! Time for a break.")[m
+[31m-[m
+[31m-    def _update_timer_button_label(self):[m
+[31m-        m, s = divmod(self.timer_seconds_left, 60)[m
+[31m-        self.btn_timer.setText(f"⏱️ {m:02d}:{s:02d}")[m
+[32m+[m[32m            self.btn_timer.setStyleSheet([m
+[32m+[m[32m                "QPushButton { background-color: #2e7d32; color: white; font-weight: bold; } QPushButton:hover { background-color: #388e3c; }"[m
+[32m+[m[32m            )[m
+ [m
+     def _toggle_vlc_music(self):[m
+         host = os.getenv("VLC_HOST", "localhost").strip() or "localhost"[m
+[1mdiff --git a/src/ui/focus_widget.py b/src/ui/focus_widget.py[m
+[1mindex 50bb373..816d549 100644[m
+[1m--- a/src/ui/focus_widget.py[m
+[1m+++ b/src/ui/focus_widget.py[m
+[36m@@ -79,6 +79,7 @@[m [mclass FocusDashboardWidget(QWidget):[m
+ [m
+     session_started = Signal(int)  # duration_minutes[m
+     session_completed = Signal(int, int)  # duration_minutes, study_list_id[m
+[32m+[m[32m    timer_tick_signal = Signal(int, int, bool, bool)  # seconds_left, total_seconds, is_running, is_paused[m
+ [m
+     DURATIONS = [5, 10, 15, 20, 25, 30, 45, 60, 90, 120][m
+ [m
+[36m@@ -473,6 +474,7 @@[m [mclass FocusDashboardWidget(QWidget):[m
+                 "QPushButton { background-color: #d84315; color: white; border: none; border-radius: 6px; }"[m
+             )[m
+             self.session_started.emit(mins)[m
+[32m+[m[32m            self.timer_tick_signal.emit(self.seconds_left, self.total_session_seconds, True, False)[m
+         elif not self.is_paused:[m
+             # Pause session[m
+             self.is_paused = True[m
+[36m@@ -481,6 +483,7 @@[m [mclass FocusDashboardWidget(QWidget):[m
+             self.btn_start.setStyleSheet([m
+                 "QPushButton { background-color: #2e7d32; color: white; border: none; border-radius: 6px; }"[m
+             )[m
+[32m+[m[32m            self.timer_tick_signal.emit(self.seconds_left, self.total_session_seconds, True, True)[m
+         else:[m
+             # Resume session[m
+             self.is_paused = False[m
+[36m@@ -489,18 +492,20 @@[m [mclass FocusDashboardWidget(QWidget):[m
+             self.btn_start.setStyleSheet([m
+                 "QPushButton { background-color: #d84315; color: white; border: none; border-radius: 6px; }"[m
+             )[m
+[32m+[m[32m            self.timer_tick_signal.emit(self.seconds_left, self.total_session_seconds, True, False)[m
+ [m
+     def _on_tick(self):[m
+         if self.seconds_left > 0:[m
+             self.seconds_left -= 1[m
+             m, s = divmod(self.seconds_left, 60)[m
+             self.lbl_time_display.setText(f"{m:02d}:{s:02d}")[m
+[32m+[m[32m            self.timer_tick_signal.emit(self.seconds_left, self.total_session_seconds, True, False)[m
+         else:[m
+             self.timer.stop()[m
+             self.is_running = False[m
+             self.is_paused = False[m
+ [m
+[31m-            mins = self.DURATIONS[self.current_duration_idx][m
+[32m+[m[32m            mins = max(1, self.total_session_seconds // 60)[m
+             self.db_manager.log_focus_session(self.selected_study_list_id, mins)[m
+ [m
+             self.btn_time_up.setEnabled(True)[m
+[36m@@ -513,6 +518,7 @@[m [mclass FocusDashboardWidget(QWidget):[m
+ [m
+             self._update_duration_display()[m
+             self.refresh_focus_dashboard()[m
+[32m+[m[32m            self.timer_tick_signal.emit(0, 0, False, False)[m
+ [m
+             QMessageBox.information([m
+                 self,[m
+[36m@@ -521,6 +527,41 @@[m [mclass FocusDashboardWidget(QWidget):[m
+             )[m
+             self.session_completed.emit(mins, self.selected_study_list_id)[m
+ [m
+[32m+[m[32m    def handle_topbar_timer_click(self, default_mins: int = 25):[m
+[32m+[m[32m        """Called when user clicks ⏱️ Timer button on top bar."""[m
+[32m+[m[32m        if self.is_running:[m
+[32m+[m[32m            # Toggle pause / resume or prompt stop[m
+[32m+[m[32m            if not self.is_paused:[m
+[32m+[m[32m                self._on_start_clicked()  # Pause[m
+[32m+[m[32m            else:[m
+[32m+[m[32m                self._on_start_clicked()  # Resume[m
+[32m+[m[32m        else:[m
+[32m+[m[32m            mins, ok = QInputDialog.getInt(self, "Study Timer", "Set Study Timer (minutes):", default_mins, 1, 180)[m
+[32m+[m[32m            if ok and mins > 0:[m
+[32m+[m[32m                self.start_custom_timer(mins)[m
+[32m+[m
+[32m+[m[32m    def start_custom_timer(self, mins: int):[m
+[32m+[m[32m        if self.is_running:[m
+[32m+[m[32m            self.timer.stop()[m
+[32m+[m
+[32m+[m[32m        self.total_session_seconds = mins * 60[m
+[32m+[m[32m        self.seconds_left = self.total_session_seconds[m
+[32m+[m[32m        self.is_running = True[m
+[32m+[m[32m        self.is_paused = False[m
+[32m+[m[32m        self.timer.start()[m
+[32m+[m
+[32m+[m[32m        self.btn_time_up.setEnabled(False)[m
+[32m+[m[32m        self.btn_time_down.setEnabled(False)[m
+[32m+[m[32m        self.chk_skip_breaks.setEnabled(False)[m
+[32m+[m[32m        self.lbl_time_display.setText(f"{mins:02d}:00")[m
+[32m+[m
+[32m+[m[32m        self.btn_start.setText("⏸  Pause focus session")[m
+[32m+[m[32m        self.btn_start.setStyleSheet([m
+[32m+[m[32m            "QPushButton { background-color: #d84315; color: white; border: none; border-radius: 6px; }"[m
+[32m+[m[32m        )[m
+[32m+[m[32m        self.session_started.emit(mins)[m
+[32m+[m[32m        self.timer_tick_signal.emit(self.seconds_left, self.total_session_seconds, True, False)[m
+[32m+[m
+     def _prompt_add_study_list(self):[m
+         name, ok = QInputDialog.getText(self, "Create Study List", "Study List Name:")[m
+         if ok and name.strip():[m
+[1mdiff --git a/src/ui/library_view.py b/src/ui/library_view.py[m
+[1mindex 4b0f562..6691f3c 100644[m
+[1m--- a/src/ui/library_view.py[m
+[1m+++ b/src/ui/library_view.py[m
+[36m@@ -45,10 +45,10 @@[m [mclass DocumentListItemWidget(QWidget):[m
+         info_layout = QVBoxLayout()[m
+         info_layout.setSpacing(3)[m
+ [m
+[31m-        self.title_label = QLabel(doc_data.get("title", "Untitled"))[m
+[31m-        title_font = QFont()[m
+[32m+[m[32m        title_text = doc_data.get("title") or os.path.basename(doc_data.get("file_path", "Untitled"))[m
+[32m+[m[32m        self.title_label = QLabel(title_text)[m
+[32m+[m[32m        title_font = QFont("Segoe UI", 9)[m
+         title_font.setBold(True)[m
+[31m-        title_font.setPointSize(9)[m
+         self.title_label.setFont(title_font)[m
+         self.title_label.setWordWrap(True)[m
+         info_layout.addWidget(self.title_label)[m
+[1mdiff --git a/src/ui/main_window.py b/src/ui/main_window.py[m
+[1mindex 2f7ef9a..c640bdb 100644[m
+[1m--- a/src/ui/main_window.py[m
+[1m+++ b/src/ui/main_window.py[m
+[36m@@ -131,6 +131,12 @@[m [mclass MainWindow(QMainWindow):[m
+         self.top_bar.prev_search_match_requested.connect(self.prev_search_match)[m
+         self.top_bar.toggle_left_panel_requested.connect(self._toggle_library_panel)[m
+         self.top_bar.toggle_right_panel_requested.connect(self._toggle_right_sidebar)[m
+[32m+[m
+[32m+[m[32m        # Synchronize Timer between FocusDashboardWidget (Home View) and TopBarWidget (Reader View)[m
+[32m+[m[32m        focus_dash = self.home_view.focus_dashboard[m
+[32m+[m[32m        focus_dash.timer_tick_signal.connect(self.top_bar.sync_timer_state)[m
+[32m+[m[32m        self.top_bar.timer_button_clicked.connect(focus_dash.handle_topbar_timer_click)[m
+[32m+[m
+         center_layout.addWidget(self.top_bar)[m
+ [m
+         self.viewer_widget = PDFViewerWidget(self.center_container)[m
+[36m@@ -476,4 +482,4 @@[m [mclass MainWindow(QMainWindow):[m
+         self.position_debouncer.flush()[m
+         if self.current_reader:[m
+             self.current_reader.close()[m
+[31m-        super().closeEvent(event)[m
+[32m+[m[32m        event.accept()[m
+[1mdiff --git a/src/ui/study_list_widget.py b/src/ui/study_list_widget.py[m
+[1mindex 60bd6c6..5e513bd 100644[m
+[1m--- a/src/ui/study_list_widget.py[m
+[1m+++ b/src/ui/study_list_widget.py[m
+[36m@@ -36,9 +36,7 @@[m [mclass StudyListWidget(QWidget):[m
+ [m
+         # Header[m
+         header = QLabel("Study Lists")[m
+[31m-        header_font = QFont()[m
+[31m-        header_font.setBold(True)[m
+[31m-        header_font.setPointSize(13)[m
+[32m+[m[32m        header_font = QFont("Segoe UI", 13, QFont.Bold)[m
+         header.setFont(header_font)[m
+         layout.addWidget(header)[m
+ [m
+[1mdiff --git a/src/ui/viewer_widget.py b/src/ui/viewer_widget.py[m
+[1mindex 3055af2..78fe45f 100644[m
+[1m--- a/src/ui/viewer_widget.py[m
+[1m+++ b/src/ui/viewer_widget.py[m
+[36m@@ -1,7 +1,12 @@[m
+ import json[m
+[32m+[m[32mimport os[m
+[32m+[m[32mimport shutil[m
+[32m+[m[32mimport subprocess[m
+[32m+[m[32mimport time[m
+ import urllib.parse[m
+[32m+[m[32mimport winreg[m
+ from typing import List, Tuple, Optional, Dict, Any[m
+[31m-from PySide6.QtCore import Qt, QRectF, Signal, Slot, QPoint, QRect, QTimer, QUrl, QEvent[m
+[32m+[m[32mfrom PySide6.QtCore import Qt, QRectF, Signal, Slot, QPoint, QRect, QTimer, QUrl, QEvent, QThreadPool[m
+ from PySide6.QtGui import ([m
+     QPainter,[m
+     QPixmap,[m
+[36m@@ -32,6 +37,67 @@[m [mfrom PySide6.QtWidgets import ([m
+ )[m
+ from src.reader.document import DocumentReader[m
+ from src.reader.render_cache import RenderCache[m
+[32m+[m[32mfrom src.reader.render_worker import PageRenderTask[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef find_chrome_executable() -> Optional[str]:[m
+[32m+[m[32m    """Locates chrome.exe via Registry App Paths, standard Windows installation paths, or system PATH."""[m
+[32m+[m[32m    for hkey in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):[m
+[32m+[m[32m        try:[m
+[32m+[m[32m            with winreg.OpenKey(hkey, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe") as key:[m
+[32m+[m[32m                val, _ = winreg.QueryValueEx(key, "")[m
+[32m+[m[32m                if val and os.path.exists(val):[m
+[32m+[m[32m                    return val[m
+[32m+[m[32m        except Exception:[m
+[32m+[m[32m            pass[m
+[32m+[m
+[32m+[m[32m    candidates = [[m
+[32m+[m[32m        os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),[m
+[32m+[m[32m        os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),[m
+[32m+[m[32m        os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),[m
+[32m+[m[32m        os.path.expandvars(r"%ProgramData%\Google\Chrome\Application\chrome.exe"),[m
+[32m+[m[32m    ][m
+[32m+[m[32m    for path in candidates:[m
+[32m+[m[32m        if os.path.exists(path):[m
+[32m+[m[32m            return path[m
+[32m+[m
+[32m+[m[32m    which_chrome = shutil.which("chrome") or shutil.which("chrome.exe")[m
+[32m+[m[32m    if which_chrome:[m
+[32m+[m[32m        return which_chrome[m
+[32m+[m
+[32m+[m[32m    return None[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef open_url_in_right_half_chrome(url: str):[m
+[32m+[m[32m    """Launches Chrome in a new window snapped to the right half of the primary screen."""[m
+[32m+[m[32m    chrome_path = find_chrome_executable()[m
+[32m+[m
+[32m+[m[32m    screen = QApplication.primaryScreen()[m
+[32m+[m[32m    if screen:[m
+[32m+[m[32m        geom = screen.availableGeometry()[m
+[32m+[m[32m        w = geom.width() // 2[m
+[32m+[m[32m        h = geom.height()[m
+[32m+[m[32m        x = geom.x() + w[m
+[32m+[m[32m        y = geom.y()[m
+[32m+[m[32m    else:[m
+[32m+[m[32m        x, y, w, h = 960, 0, 960, 1040[m
+[32m+[m
+[32m+[m[32m    if chrome_path:[m
+[32m+[m[32m        try:[m
+[32m+[m[32m            cmd = [[m
+[32m+[m[32m                chrome_path,[m
+[32m+[m[32m                "--new-window",[m
+[32m+[m[32m                f"--window-position={x},{y}",[m
+[32m+[m[32m                f"--window-size={w},{h}",[m
+[32m+[m[32m                url,[m
+[32m+[m[32m            ][m
+[32m+[m[32m            subprocess.Popen(cmd)[m
+[32m+[m[32m            return[m
+[32m+[m[32m        except Exception:[m
+[32m+[m[32m            pass[m
+[32m+[m
+[32m+[m[32m    # Fallback to default browser if Chrome executable could not be launched directly[m
+[32m+[m[32m    QDesktopServices.openUrl(QUrl(url))[m
+ [m
+ HIGHLIGHT_COLORS = [[m
+     ("#FFF59D", "Yellow"),[m
+[36m@@ -130,6 +196,11 @@[m [mclass PageCanvas(QWidget):[m
+         self.selected_rects: List[Tuple[float, float, float, float]] = [][m
+         self.selected_text: str = ""[m
+ [m
+[32m+[m[32m        # Multi-click tracking (double-click word, triple-click sentence)[m
+[32m+[m[32m        self.click_count: int = 0[m
+[32m+[m[32m        self.last_click_time: float = 0.0[m
+[32m+[m[32m        self.last_click_pos: QPoint = QPoint()[m
+[32m+[m
+         self.setMouseTracking(True)[m
+         self.setFocusPolicy(Qt.StrongFocus)[m
+         self.setStyleSheet("PageCanvas { background-color: white; border: 1px solid #1a1a1a; }")[m
+[36m@@ -165,115 +236,244 @@[m [mclass PageCanvas(QWidget):[m
+ [m
+     def mousePressEvent(self, event: QMouseEvent):[m
+         if event.button() == Qt.LeftButton:[m
+[32m+[m[32m            now = time.time()[m
+[32m+[m[32m            pos = event.position().toPoint()[m
+[32m+[m[32m            dt = now - self.last_click_time[m
+[32m+[m[32m            dist = (pos - self.last_click_pos).manhattanLength()[m
+[32m+[m
+[32m+[m[32m            if dt < 0.45 and dist < 8:[m
+[32m+[m[32m                self.click_count += 1[m
+[32m+[m[32m            else:[m
+[32m+[m[32m                self.click_count = 1[m
+[32m+[m
+[32m+[m[32m            self.last_click_time = now[m
+[32m+[m[32m            self.last_click_pos = pos[m
+[32m+[m
+             self.clear_selection_signal.emit()[m
+[31m-            self.is_selecting = True[m
+[31m-            self.select_start = event.position().toPoint()[m
+[31m-            self.select_current = event.position().toPoint()[m
+[31m-            self.selected_words = [][m
+[31m-            self.selected_rects = [][m
+[31m-            self.selected_text = ""[m
+[31m-            self.update()[m
+[32m+[m[32m            self.select_start = pos[m
+[32m+[m[32m            self.select_current = pos[m
+[32m+[m[32m            self.is_selecting = False[m
+[32m+[m
+[32m+[m[32m            if self.click_count == 2:[m
+[32m+[m[32m                # Double click -> select word under cursor[m
+[32m+[m[32m                self._select_word_at_pos(pos)[m
+[32m+[m[32m                if self.selected_text.strip() and self.selected_rects:[m
+[32m+[m[32m                    self.text_selected.emit(self.page_num, self.selected_text, self.selected_rects)[m
+[32m+[m[32m                self.update()[m
+[32m+[m[32m            elif self.click_count >= 3:[m
+[32m+[m[32m                # Triple click -> select sentence under cursor[m
+[32m+[m[32m                self._select_sentence_at_pos(pos)[m
+[32m+[m[32m                if self.selected_text.strip() and self.selected_rects:[m
+[32m+[m[32m                    self.text_selected.emit(self.page_num, self.selected_text, self.selected_rects)[m
+[32m+[m[32m                self.update()[m
+[32m+[m[32m            else:[m
+[32m+[m[32m                self.selected_words = [][m
+[32m+[m[32m                self.selected_rects = [][m
+[32m+[m[32m                self.selected_text = ""[m
+[32m+[m[32m                self.update()[m
+[32m+[m
+         super().mousePressEvent(event)[m
+ [m
+     def mouseMoveEvent(self, event: QMouseEvent):[m
+[31m-        if self.is_selecting:[m
+[31m-            self.select_current = event.position().toPoint()[m
+[31m-            self._update_text_selection()[m
+[31m-            self.update()[m
+[31m-        super().mouseMoveEvent(event)[m
+[32m+[m[32m        pos = event.position().toPoint()[m
+ [m
+[31m-    def mouseReleaseEvent(self, event: QMouseEvent):[m
+[31m-        if event.button() == Qt.LeftButton and self.is_selecting:[m
+[31m-            self.is_selecting = False[m
+[31m-            self._update_text_selection()[m
+[32m+[m[32m        if self.zoom > 0 and self.words:[m
+[32m+[m[32m            px = pos.x() / self.zoom[m
+[32m+[m[32m            py = pos.y() / self.zoom[m
+ [m
+[31m-            if self.selected_text.strip() and self.selected_rects:[m
+[31m-                self.text_selected.emit(self.page_num, self.selected_text, self.selected_rects)[m
+[32m+[m[32m            # Update Cursor Icon (I-Beam over text, Arrow elsewhere)[m
+[32m+[m[32m            is_over_text = any([m
+[32m+[m[32m                (w[0] - 2) <= px <= (w[2] + 2) and (w[1] - 2) <= py <= (w[3] + 2)[m
+[32m+[m[32m                for w in self.words[m
+[32m+[m[32m            )[m
+[32m+[m[32m            if is_over_text:[m
+[32m+[m[32m                self.setCursor(QCursor(Qt.IBeamCursor))[m
+             else:[m
+[31m-                rect = QRect(self.select_start, self.select_current).normalized()[m
+[31m-                if rect.width() > 10 and rect.height() > 10 and self.zoom > 0:[m
+[31m-                    ux, uy = rect.x() / self.zoom, rect.y() / self.zoom[m
+[31m-                    uw, uh = rect.width() / self.zoom, rect.height() / self.zoom[m
+[31m-                    self.region_selected.emit(self.page_num, ux, uy, uw, uh)[m
+[32m+[m[32m                self.setCursor(QCursor(Qt.ArrowCursor))[m
+[32m+[m
+[32m+[m[32m        if event.buttons() & Qt.LeftButton and self.click_count == 1:[m
+[32m+[m[32m            dist = (pos - self.select_start).manhattanLength()[m
+[32m+[m[32m            if dist > 5 or self.is_selecting:[m
+[32m+[m[32m                self.is_selecting = True[m
+[32m+[m[32m                self.select_current = pos[m
+[32m+[m[32m                self._update_text_selection()[m
+[32m+[m[32m                self.update()[m
+[32m+[m
+[32m+[m[32m        super().mouseMoveEvent(event)[m
+[32m+[m
+[32m+[m[32m    def mouseReleaseEvent(self, event: QMouseEvent):[m
+[32m+[m[32m        if event.button() == Qt.LeftButton:[m
+[32m+[m[32m            if self.is_selecting:[m
+[32m+[m[32m                self.is_selecting = False[m
+[32m+[m[32m                self._update_text_selection()[m
+[32m+[m
+[32m+[m[32m                if self.selected_text.strip() and self.selected_rects:[m
+[32m+[m[32m                    self.text_selected.emit(self.page_num, self.selected_text, self.selected_rects)[m
+[32m+[m[32m                else:[m
+[32m+[m[32m                    rect = QRect(self.select_start, self.select_current).normalized()[m
+[32m+[m[32m                    if rect.width() > 10 and rect.height() > 10 and self.zoom > 0:[m
+[32m+[m[32m                        ux, uy = rect.x() / self.zoom, rect.y() / self.zoom[m
+[32m+[m[32m                        uw, uh = rect.width() / self.zoom, rect.height() / self.zoom[m
+[32m+[m[32m                        self.region_selected.emit(self.page_num, ux, uy, uw, uh)[m
+[32m+[m
+[32m+[m[32m                self.update()[m
+[32m+[m[32m            elif self.click_count == 1:[m
+[32m+[m[32m                # Single left click without drag: clear selection (do not select text)[m
+[32m+[m[32m                self.clear_selection()[m
+[32m+[m[32m                self.clear_selection_signal.emit()[m
+ [m
+[31m-            self.update()[m
+         super().mouseReleaseEvent(event)[m
+ [m
+     def wheelEvent(self, event: QWheelEvent):[m
+         event.ignore()[m
+ [m
+[31m-    def _get_word_index_at_pos(self, px: float, py: float) -> int:[m
+[31m-        """Finds index of word in self.words closest in reading order to unscaled point (px, py)."""[m
+[32m+[m[32m    def _get_sorted_lines(self) -> List[List[Tuple[float, float, float, float, str]]]:[m
+[32m+[m[32m        """Groups words into visual horizontal lines sorted top-to-bottom and left-to-right."""[m
+         if not self.words:[m
+[31m-            return -1[m
+[31m-[m
+[31m-        # 1. Direct hit check[m
+[31m-        for idx, (x0, y0, x1, y1, word) in enumerate(self.words):[m
+[31m-            if x0 <= px <= x1 and y0 <= py <= y1:[m
+[31m-                return idx[m
+[32m+[m[32m            return [][m
+ [m
+[31m-        # 2. Group words into horizontal lines[m
+[31m-        lines = [][m
+[31m-        for idx, (x0, y0, x1, y1, word) in enumerate(self.words):[m
+[32m+[m[32m        lines: List[List[Tuple[float, float, float, float, str]]] = [][m
+[32m+[m[32m        for w in self.words:[m
+[32m+[m[32m            x0, y0, x1, y1, word = w[m
+             matched = False[m
+             for line in lines:[m
+[31m-                l_min_y, l_max_y, indices = line[m
+[31m-                if not (y1 < l_min_y or y0 > l_max_y):[m
+[31m-                    indices.append(idx)[m
+[31m-                    line[0] = min(l_min_y, y0)[m
+[31m-                    line[1] = max(l_max_y, y1)[m
+[32m+[m[32m                # Check vertical overlap with line bounds[m
+[32m+[m[32m                l_y0 = min(item[1] for item in line)[m
+[32m+[m[32m                l_y1 = max(item[3] for item in line)[m
+[32m+[m[32m                l_height = max(1.0, l_y1 - l_y0)[m
+[32m+[m[32m                overlap = max(0.0, min(y1, l_y1) - max(y0, l_y0))[m
+[32m+[m[32m                if overlap >= 0.4 * l_height or (y0 >= l_y0 - 2 and y1 <= l_y1 + 2):[m
+[32m+[m[32m                    line.append(w)[m
+                     matched = True[m
+                     break[m
+             if not matched:[m
+[31m-                lines.append([y0, y1, [idx]])[m
+[32m+[m[32m                lines.append([w])[m
+ [m
+[31m-        if not lines:[m
+[31m-            return 0[m
+[32m+[m[32m        # Sort lines top-to-bottom[m
+[32m+[m[32m        lines.sort(key=lambda l: sum(w[1] for w in l) / len(l))[m
+[32m+[m[32m        # Sort words inside each line left-to-right[m
+[32m+[m[32m        for line in lines:[m
+[32m+[m[32m            line.sort(key=lambda w: w[0])[m
+ [m
+[31m-        lines.sort(key=lambda l: l[0])[m
+[32m+[m[32m        return lines[m
+ [m
+[31m-        # 3. Find target line[m
+[31m-        if py < lines[0][0]:[m
+[31m-            target_line = lines[0][m
+[31m-        elif py > lines[-1][1]:[m
+[31m-            target_line = lines[-1][m
+[31m-        else:[m
+[31m-            best_dist = float("inf")[m
+[31m-            target_line = lines[0][m
+[32m+[m[32m    def _select_word_at_pos(self, pos: QPoint):[m
+[32m+[m[32m        if not self.words or self.zoom <= 0:[m
+[32m+[m[32m            return[m
+[32m+[m
+[32m+[m[32m        px = pos.x() / self.zoom[m
+[32m+[m[32m        py = pos.y() / self.zoom[m
+[32m+[m
+[32m+[m[32m        # Direct hit check[m
+[32m+[m[32m        for w in self.words:[m
+[32m+[m[32m            x0, y0, x1, y1, text = w[m
+[32m+[m[32m            if (x0 - 2) <= px <= (x1 + 2) and (y0 - 2) <= py <= (y1 + 2):[m
+[32m+[m[32m                self.selected_words = [w][m
+[32m+[m[32m                self.selected_text = text[m
+[32m+[m[32m                self.selected_rects = [(x0, y0, x1, y1)][m
+[32m+[m[32m                return[m
+[32m+[m
+[32m+[m[32m        # Proximity check on closest line[m
+[32m+[m[32m        lines = self._get_sorted_lines()[m
+[32m+[m[32m        best_word = None[m
+[32m+[m[32m        min_dist = float("inf")[m
+[32m+[m
+[32m+[m[32m        for line in lines:[m
+[32m+[m[32m            for w in line:[m
+[32m+[m[32m                x0, y0, x1, y1, text = w[m
+[32m+[m[32m                cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0[m
+[32m+[m[32m                dist = (px - cx) ** 2 + (py - cy) ** 2[m
+[32m+[m[32m                if dist < min_dist:[m
+[32m+[m[32m                    min_dist = dist[m
+[32m+[m[32m                    best_word = w[m
+[32m+[m
+[32m+[m[32m        if best_word and min_dist < 2500:  # within ~50px[m
+[32m+[m[32m            x0, y0, x1, y1, text = best_word[m
+[32m+[m[32m            self.selected_words = [best_word][m
+[32m+[m[32m            self.selected_text = text[m
+[32m+[m[32m            self.selected_rects = [(x0, y0, x1, y1)][m
+[32m+[m
+[32m+[m[32m    def _select_sentence_at_pos(self, pos: QPoint):[m
+[32m+[m[32m        """Selects the entire sentence containing the word at pos."""[m
+[32m+[m[32m        if not self.words or self.zoom <= 0:[m
+[32m+[m[32m            return[m
+[32m+[m
+[32m+[m[32m        lines = self._get_sorted_lines()[m
+[32m+[m[32m        flat_words: List[Tuple[float, float, float, float, str]] = [][m
+[32m+[m[32m        for line in lines:[m
+[32m+[m[32m            flat_words.extend(line)[m
+[32m+[m
+[32m+[m[32m        if not flat_words:[m
+[32m+[m[32m            return[m
+[32m+[m
+[32m+[m[32m        # Find target word index[m
+[32m+[m[32m        px = pos.x() / self.zoom[m
+[32m+[m[32m        py = pos.y() / self.zoom[m
+[32m+[m[32m        target_idx = 0[m
+[32m+[m[32m        min_dist = float("inf")[m
+[32m+[m
+[32m+[m[32m        for idx, w in enumerate(flat_words):[m
+[32m+[m[32m            x0, y0, x1, y1, _ = w[m
+[32m+[m[32m            cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0[m
+[32m+[m[32m            dist = (px - cx) ** 2 + (py - cy) ** 2[m
+[32m+[m[32m            if dist < min_dist:[m
+[32m+[m[32m                min_dist = dist[m
+[32m+[m[32m                target_idx = idx[m
+[32m+[m
+[32m+[m[32m        # Expand backwards to start of sentence[m
+[32m+[m[32m        start_idx = target_idx[m
+[32m+[m[32m        while start_idx > 0:[m
+[32m+[m[32m            prev_word = flat_words[start_idx - 1][4].strip()[m
+[32m+[m[32m            if prev_word.endswith((".", "?", "!", ".\"", ".\'")):[m
+[32m+[m[32m                break[m
+[32m+[m[32m            start_idx -= 1[m
+[32m+[m
+[32m+[m[32m        # Expand forwards to end of sentence[m
+[32m+[m[32m        end_idx = target_idx[m
+[32m+[m[32m        while end_idx < len(flat_words) - 1:[m
+[32m+[m[32m            curr_word = flat_words[end_idx][4].strip()[m
+[32m+[m[32m            if curr_word.endswith((".", "?", "!", ".\"", ".\'")):[m
+[32m+[m[32m                break[m
+[32m+[m[32m            end_idx += 1[m
+[32m+[m
+[32m+[m[32m        matched_words = flat_words[start_idx : end_idx + 1][m
+[32m+[m[32m        self.selected_words = matched_words[m
+[32m+[m[32m        self.selected_text = " ".join(w[4] for w in matched_words)[m
+[32m+[m[32m        self.selected_rects = self._build_merged_line_rects(matched_words)[m
+[32m+[m
+[32m+[m[32m    def _build_merged_line_rects([m
+[32m+[m[32m        self, words: List[Tuple[float, float, float, float, str]][m
+[32m+[m[32m    ) -> List[Tuple[float, float, float, float]]:[m
+[32m+[m[32m        """Merges word bounding boxes into clean horizontal line highlight rectangles."""[m
+[32m+[m[32m        if not words:[m
+[32m+[m[32m            return [][m
+[32m+[m
+[32m+[m[32m        # Group selected words into lines[m
+[32m+[m[32m        lines: List[List[Tuple[float, float, float, float, str]]] = [][m
+[32m+[m[32m        for w in words:[m
+[32m+[m[32m            matched = False[m
+             for line in lines:[m
+[31m-                l_min_y, l_max_y, _ = line[m
+[31m-                if l_min_y <= py <= l_max_y:[m
+[31m-                    target_line = line[m
+[32m+[m[32m                l_y0 = min(item[1] for item in line)[m
+[32m+[m[32m                l_y1 = max(item[3] for item in line)[m
+[32m+[m[32m                if not (w[3] < l_y0 or w[1] > l_y1):[m
+[32m+[m[32m                    line.append(w)[m
+[32m+[m[32m                    matched = True[m
+                     break[m
+[31m-                dist = min(abs(py - l_min_y), abs(py - l_max_y))[m
+[31m-                if dist < best_dist:[m
+[31m-                    best_dist = dist[m
+[31m-                    target_line = line[m
+[31m-[m
+[31m-        # 4. Find word on target line by x coordinate[m
+[31m-        indices = target_line[2][m
+[31m-        indices.sort(key=lambda i: self.words[i][0])[m
+[31m-[m
+[31m-        if px <= self.words[indices[0]][0]:[m
+[31m-            return indices[0][m
+[31m-        if px >= self.words[indices[-1]][1]:[m
+[31m-            return indices[-1][m
+[31m-[m
+[31m-        best_idx = indices[0][m
+[31m-        min_dx = float("inf")[m
+[31m-        for i in indices:[m
+[31m-            x0, _, x1, _, _ = self.words[i][m
+[31m-            if x0 <= px <= x1:[m
+[31m-                return i[m
+[31m-            mid_x = (x0 + x1) / 2.0[m
+[31m-            dx = abs(px - mid_x)[m
+[31m-            if dx < min_dx:[m
+[31m-                min_dx = dx[m
+[31m-                best_idx = i[m
+[31m-[m
+[31m-        return best_idx[m
+[32m+[m[32m            if not matched:[m
+[32m+[m[32m                lines.append([w])[m
+[32m+[m
+[32m+[m[32m        rects = [][m
+[32m+[m[32m        for line in lines:[m
+[32m+[m[32m            x0 = min(w[0] for w in line)[m
+[32m+[m[32m            y0 = min(w[1] for w in line)[m
+[32m+[m[32m            x1 = max(w[2] for w in line)[m
+[32m+[m[32m            y1 = max(w[3] for w in line)[m
+[32m+[m[32m            rects.append((x0, y0, x1, y1))[m
+[32m+[m
+[32m+[m[32m        return rects[m
+ [m
+     def _update_text_selection(self):[m
+[32m+[m[32m        """Chrome PDF Viewer 2D text selection algorithm."""[m
+         if not self.words or self.zoom <= 0:[m
+             return[m
+ [m
+[36m@@ -282,25 +482,52 @@[m [mclass PageCanvas(QWidget):[m
+         curr_px = self.select_current.x() / self.zoom[m
+         curr_py = self.select_current.y() / self.zoom[m
+ [m
+[31m-        start_idx = self._get_word_index_at_pos(start_px, start_py)[m
+[31m-        end_idx = self._get_word_index_at_pos(curr_px, curr_py)[m
+[31m-[m
+[31m-        if start_idx < 0 or end_idx < 0:[m
+[31m-            self.selected_words = [][m
+[31m-            self.selected_rects = [][m
+[31m-            self.selected_text = ""[m
+[32m+[m[32m        lines = self._get_sorted_lines()[m
+[32m+[m[32m        if not lines:[m
+             return[m
+ [m
+[31m-        idx_a = min(start_idx, end_idx)[m
+[31m-        idx_b = max(start_idx, end_idx)[m
+[31m-[m
+[31m-        matched_words = self.words[idx_a : idx_b + 1][m
+[31m-        text_parts = [w[4] for w in matched_words][m
+[31m-        rects = [(w[0], w[1], w[2], w[3]) for w in matched_words][m
+[32m+[m[32m        # Determine start line and end line by Y coordinate[m
+[32m+[m[32m        # Normalize so (s_x, s_y) is top-leftmost and (c_x, c_y) is bottom-rightmost[m
+[32m+[m[32m        if (start_py > curr_py) or (abs(start_py - curr_py) < 8 and start_px > curr_px):[m
+[32m+[m[32m            s_x, s_y = curr_px, curr_py[m
+[32m+[m[32m            e_x, e_y = start_px, start_py[m
+[32m+[m[32m        else:[m
+[32m+[m[32m            s_x, s_y = start_px, start_py[m
+[32m+[m[32m            e_x, e_y = curr_px, curr_py[m
+[32m+[m
+[32m+[m[32m        selected_words = [][m
+[32m+[m[32m        for line in lines:[m
+[32m+[m[32m            l_y0 = min(w[1] for w in line)[m
+[32m+[m[32m            l_y1 = max(w[3] for w in line)[m
+[32m+[m
+[32m+[m[32m            # Skip lines strictly above selection start or strictly below selection end[m
+[32m+[m[32m            if l_y1 < s_y - 10 or l_y0 > e_y + 10:[m
+[32m+[m[32m                continue[m
+[32m+[m
+[32m+[m[32m            is_start_line = (l_y0 <= s_y <= l_y1) or (l_y0 <= s_y + 8 and l_y1 >= s_y - 8)[m
+[32m+[m[32m            is_end_line = (l_y0 <= e_y <= l_y1) or (l_y0 <= e_y + 8 and l_y1 >= e_y - 8)[m
+[32m+[m
+[32m+[m[32m            if is_start_line and is_end_line:[m
+[32m+[m[32m                min_x, max_x = min(s_x, e_x), max(s_x, e_x)[m
+[32m+[m[32m                for w in line:[m
+[32m+[m[32m                    mid_x = (w[0] + w[2]) / 2.0[m
+[32m+[m[32m                    if min_x <= mid_x <= max_x or (w[0] <= max_x and w[2] >= min_x):[m
+[32m+[m[32m                        selected_words.append(w)[m
+[32m+[m[32m            elif is_start_line:[m
+[32m+[m[32m                for w in line:[m
+[32m+[m[32m                    if w[2] >= s_x:[m
+[32m+[m[32m                        selected_words.append(w)[m
+[32m+[m[32m            elif is_end_line:[m
+[32m+[m[32m                for w in line:[m
+[32m+[m[32m                    if w[0] <= e_x:[m
+[32m+[m[32m                        selected_words.append(w)[m
+[32m+[m[32m            else:[m
+[32m+[m[32m                # Middle lines: select all words[m
+[32m+[m[32m                selected_words.extend(line)[m
+ [m
+[31m-        self.selected_words = matched_words[m
+[31m-        self.selected_rects = rects[m
+[31m-        self.selected_text = " ".join(text_parts)[m
+[32m+[m[32m        self.selected_words = selected_words[m
+[32m+[m[32m        self.selected_text = " ".join(w[4] for w in selected_words)[m
+[32m+[m[32m        self.selected_rects = self._build_merged_line_rects(selected_words)[m
+ [m
+     def paintEvent(self, event):[m
+         painter = QPainter(self)[m
+[36m@@ -388,6 +615,7 @@[m [mclass PDFViewerWidget(QScrollArea):[m
+         self.search_boxes_by_page: Dict[int, List[Tuple[float, float, float, float]]] = {}[m
+         self.notes_by_page: Dict[int, List[Dict[str, Any]]] = {}[m
+         self.highlights_by_page: Dict[int, List[Dict[str, Any]]] = {}[m
+[32m+[m[32m        self.pending_tasks: Dict[Tuple[int, float, str], bool] = {}[m
+ [m
+         self.setAlignment(Qt.AlignCenter)[m
+         self.setWidgetResizable(True)[m
+[36m@@ -558,25 +786,41 @@[m [mclass PDFViewerWidget(QScrollArea):[m
+ [m
+             is_near_viewport = ([m
+                 not self.is_continuous_scroll[m
+[31m-                or (canvas_y + canvas_h >= scroll_y - 1000 and canvas_y <= scroll_y + viewport_rect.height() + 1000)[m
+[32m+[m[32m                or (canvas_y + canvas_h >= scroll_y - 1200 and canvas_y <= scroll_y + viewport_rect.height() + 1200)[m
+             )[m
+ [m
+             if is_near_viewport:[m
+[31m-                pixmap = self.render_cache.get(p_num, self.zoom_level, self.theme)[m
+[31m-                if pixmap is None:[m
+[31m-                    pixmap = self.doc_reader.render_page(p_num, self.zoom_level, theme=self.theme)[m
+[31m-                    self.render_cache.put(p_num, self.zoom_level, self.theme, pixmap)[m
+[31m-[m
+[31m-                words = self.doc_reader.get_words(p_num)[m
+[31m-                canvas.set_page_data([m
+[31m-                    pixmap=pixmap,[m
+[31m-                    zoom=self.zoom_level,[m
+[31m-                    unscaled_size=unscaled_size,[m
+[31m-                    words=words,[m
+[31m-                    search_boxes=self.search_boxes_by_page.get(p_num, []),[m
+[31m-                    notes=self.notes_by_page.get(p_num, []),[m
+[31m-                    highlights=self.highlights_by_page.get(p_num, []),[m
+[31m-                )[m
+[32m+[m[32m                cached_item = self.render_cache.get(p_num, self.zoom_level, self.theme)[m
+[32m+[m[32m                if cached_item is not None:[m
+[32m+[m[32m                    pixmap, words = cached_item[m
+[32m+[m[32m                    canvas.set_page_data([m
+[32m+[m[32m                        pixmap=pixmap,[m
+[32m+[m[32m                        zoom=self.zoom_level,[m
+[32m+[m[32m                        unscaled_size=unscaled_size,[m
+[32m+[m[32m                        words=words,[m
+[32m+[m[32m                        search_boxes=self.search_boxes_by_page.get(p_num, []),[m
+[32m+[m[32m                        notes=self.notes_by_page.get(p_num, []),[m
+[32m+[m[32m                        highlights=self.highlights_by_page.get(p_num, []),[m
+[32m+[m[32m                    )[m
+[32m+[m[32m                else:[m
+[32m+[m[32m                    # Enqueue background page rendering task off the UI thread[m
+[32m+[m[32m                    task_key = (p_num, round(self.zoom_level, 2), self.theme)[m
+[32m+[m[32m                    if task_key not in self.pending_tasks:[m
+[32m+[m[32m                        self.pending_tasks[task_key] = True[m
+[32m+[m[32m                        task = PageRenderTask(self.doc_reader, p_num, self.zoom_level, self.theme)[m
+[32m+[m[32m                        task.signals.render_complete.connect(self._on_page_rendered)[m
+[32m+[m[32m                        QThreadPool.globalInstance().start(task)[m
+[32m+[m
+[32m+[m[32m                    cached_words = self.render_cache.get_words(p_num) or [][m
+[32m+[m[32m                    canvas.set_page_data([m
+[32m+[m[32m                        pixmap=QPixmap(),[m
+[32m+[m[32m                        zoom=self.zoom_level,[m
+[32m+[m[32m                        unscaled_size=unscaled_size,[m
+[32m+[m[32m                        words=cached_words,[m
+[32m+[m[32m                        search_boxes=self.search_boxes_by_page.get(p_num, []),[m
+[32m+[m[32m                        notes=self.notes_by_page.get(p_num, []),[m
+[32m+[m[32m                        highlights=self.highlights_by_page.get(p_num, []),[m
+[32m+[m[32m                    )[m
+             else:[m
+                 canvas.set_page_data([m
+                     pixmap=QPixmap(),[m
+[36m@@ -584,6 +828,29 @@[m [mclass PDFViewerWidget(QScrollArea):[m
+                     unscaled_size=unscaled_size,[m
+                 )[m
+ [m
+[32m+[m[32m    @Slot(int, float, str, object, list)[m
+[32m+[m[32m    def _on_page_rendered(self, page_num: int, zoom: float, theme: str, pixmap: QPixmap, words: list):[m
+[32m+[m[32m        task_key = (page_num, round(zoom, 2), theme)[m
+[32m+[m[32m        self.pending_tasks.pop(task_key, None)[m
+[32m+[m
+[32m+[m[32m        if not pixmap.isNull():[m
+[32m+[m[32m            self.render_cache.put(page_num, zoom, theme, pixmap, words)[m
+[32m+[m
+[32m+[m[32m        if abs(zoom - self.zoom_level) <= 0.01 and theme == self.theme:[m
+[32m+[m[32m            for canvas in self.page_canvases:[m
+[32m+[m[32m                if canvas.page_num == page_num:[m
+[32m+[m[32m                    unscaled_size = self.doc_reader.get_page_size(page_num) if self.doc_reader else (600.0, 800.0)[m
+[32m+[m[32m                    canvas.set_page_data([m
+[32m+[m[32m                        pixmap=pixmap,[m
+[32m+[m[32m                        zoom=self.zoom_level,[m
+[32m+[m[32m                        unscaled_size=unscaled_size,[m
+[32m+[m[32m                        words=words,[m
+[32m+[m[32m                        search_boxes=self.search_boxes_by_page.get(page_num, []),[m
+[32m+[m[32m                        notes=self.notes_by_page.get(page_num, []),[m
+[32m+[m[32m                        highlights=self.highlights_by_page.get(page_num, []),[m
+[32m+[m[32m                    )[m
+[32m+[m[32m                    break[m
+[32m+[m
+     def _on_scroll_position_changed(self, value: int):[m
+         if not self.is_continuous_scroll or not self.page_canvases:[m
+             return[m
+[36m@@ -649,7 +916,7 @@[m [mclass PDFViewerWidget(QScrollArea):[m
+             if text.strip():[m
+                 query = urllib.parse.quote(text.strip())[m
+                 search_url = f"https://www.google.com/search?q={query}"[m
+[31m-                QDesktopServices.openUrl(QUrl(search_url))[m
+[32m+[m[32m                open_url_in_right_half_chrome(search_url)[m
+             self.clear_selection_and_toolbar()[m
+ [m
+     def next_page(self):[m
+[1mdiff --git a/tests/test_library_view.py b/tests/test_library_view.py[m
+[1mnew file mode 100644[m
+[1mindex 0000000..9bb7c39[m
+[1m--- /dev/null[m
+[1m+++ b/tests/test_library_view.py[m
+[36m@@ -0,0 +1,48 @@[m
+[32m+[m[32mimport unittest[m
+[32m+[m[32mimport tempfile[m
+[32m+[m[32mimport os[m
+[32m+[m[32mfrom PySide6.QtWidgets import QApplication[m
+[32m+[m[32mfrom src.database.db_manager import DatabaseManager[m
+[32m+[m[32mfrom src.ui.library_view import LibraryView, DocumentListItemWidget[m
+[32m+[m
+[32m+[m[32mapp = QApplication.instance() or QApplication([])[m
+[32m+[m
+[32m+[m[32mclass TestLibraryView(unittest.TestCase):[m
+[32m+[m
+[32m+[m[32m    def setUp(self):[m
+[32m+[m[32m        self.tmp_dir = tempfile.TemporaryDirectory()[m
+[32m+[m[32m        self.db_path = os.path.join(self.tmp_dir.name, "test_lib.db")[m
+[32m+[m[32m        self.db = DatabaseManager(self.db_path)[m
+[32m+[m[32m        self.db.get_or_create_document([m
+[32m+[m[32m            file_hash="hash123",[m
+[32m+[m[32m            file_path=os.path.join(self.tmp_dir.name, "sample.pdf"),[m
+[32m+[m[32m            title="Test Book Title",[m
+[32m+[m[32m            total_pages=50,[m
+[32m+[m[32m        )[m
+[32m+[m[32m        self.library_view = LibraryView(self.db)[m
+[32m+[m
+[32m+[m[32m    def tearDown(self):[m
+[32m+[m[32m        self.library_view.close()[m
+[32m+[m[32m        self.tmp_dir.cleanup()[m
+[32m+[m
+[32m+[m[32m    def test_document_list_item_widget(self):[m
+[32m+[m[32m        doc_data = {[m
+[32m+[m[32m            "file_path": os.path.join(self.tmp_dir.name, "sample.pdf"),[m
+[32m+[m[32m            "title": "Test Book Title",[m
+[32m+[m[32m            "current_page": 5,[m
+[32m+[m[32m            "total_pages": 50,[m
+[32m+[m[32m            "last_opened": "2026-09-05 05:00:00",[m
+[32m+[m[32m        }[m
+[32m+[m[32m        widget = DocumentListItemWidget(doc_data)[m
+[32m+[m[32m        self.assertIsNotNone(widget.title_label)[m
+[32m+[m[32m        self.assertEqual(widget.title_label.text(), "Test Book Title")[m
+[32m+[m
+[32m+[m[32m    def test_library_view_refresh(self):[m
+[32m+[m[32m        self.library_view.refresh_library()[m
+[32m+[m[32m        self.assertEqual(self.library_view.doc_list.count(), 1)[m
+[32m+[m[32m        item_widget = self.library_view.doc_list.itemWidget(self.library_view.doc_list.item(0))[m
+[32m+[m[32m        self.assertIsInstance(item_widget, DocumentListItemWidget)[m
+[32m+[m[32m        self.assertEqual(item_widget.title_label.text(), "Test Book Title")[m
+[32m+[m
+[32m+[m[32mif __name__ == "__main__":[m
+[32m+[m[32m    unittest.main()[m
+[1mdiff --git a/tests/test_selection_and_bookmarks.py b/tests/test_selection_and_bookmarks.py[m
+[1mindex f946f58..80b050d 100644[m
+[1m--- a/tests/test_selection_and_bookmarks.py[m
+[1m+++ b/tests/test_selection_and_bookmarks.py[m
+[36m@@ -72,5 +72,54 @@[m [mclass TestSelectionAndBookmarks(unittest.TestCase):[m
+         viewer.clear_selection_and_toolbar()[m
+         self.assertIsNone(viewer.active_selection)[m
+ [m
+[32m+[m[32m    def test_double_click_word_selection(self):[m
+[32m+[m[32m        canvas = PageCanvas(0)[m
+[32m+[m[32m        canvas.words = [[m
+[32m+[m[32m            (10.0, 10.0, 40.0, 20.0, "Hello"),[m
+[32m+[m[32m            (50.0, 10.0, 90.0, 20.0, "World."),[m
+[32m+[m[32m        ][m
+[32m+[m[32m        canvas.zoom = 1.0[m
+[32m+[m[32m        canvas._select_word_at_pos(QPoint(60, 15))[m
+[32m+[m[32m        self.assertEqual(canvas.selected_text, "World.")[m
+[32m+[m
+[32m+[m[32m    def test_triple_click_sentence_selection(self):[m
+[32m+[m[32m        canvas = PageCanvas(0)[m
+[32m+[m[32m        canvas.words = [[m
+[32m+[m[32m            (10.0, 10.0, 40.0, 20.0, "First"),[m
+[32m+[m[32m            (50.0, 10.0, 90.0, 20.0, "sentence."),[m
+[32m+[m[32m            (100.0, 10.0, 140.0, 20.0, "Second"),[m
+[32m+[m[32m            (150.0, 10.0, 190.0, 20.0, "sentence."),[m
+[32m+[m[32m        ][m
+[32m+[m[32m        canvas.zoom = 1.0[m
+[32m+[m[32m        canvas._select_sentence_at_pos(QPoint(25, 15))[m
+[32m+[m[32m        self.assertEqual(canvas.selected_text, "First sentence.")[m
+[32m+[m
+[32m+[m[32m        canvas._select_sentence_at_pos(QPoint(120, 15))[m
+[32m+[m[32m        self.assertEqual(canvas.selected_text, "Second sentence.")[m
+[32m+[m
+[32m+[m[32m    def test_timer_synchronization(self):[m
+[32m+[m[32m        from src.ui.focus_widget import FocusDashboardWidget[m
+[32m+[m[32m        from src.ui.bottom_bar import TopBarWidget[m
+[32m+[m
+[32m+[m[32m        focus_dash = FocusDashboardWidget(self.db)[m
+[32m+[m[32m        top_bar = TopBarWidget()[m
+[32m+[m
+[32m+[m[32m        focus_dash.timer_tick_signal.connect(top_bar.sync_timer_state)[m
+[32m+[m
+[32m+[m[32m        # Emit timer tick signal (15 mins left, total 15 mins, running, not paused)[m
+[32m+[m[32m        focus_dash.timer_tick_signal.emit(900, 900, True, False)[m
+[32m+[m[32m        self.assertEqual(top_bar.btn_timer.text(), "⏱️ 15:00")[m
+[32m+[m
+[32m+[m[32m        # Emit paused state[m
+[32m+[m[32m        focus_dash.timer_tick_signal.emit(900, 900, True, True)[m
+[32m+[m[32m        self.assertEqual(top_bar.btn_timer.text(), "⏸️ 15:00")[m
+[32m+[m
+[32m+[m[32m        # Emit stopped state[m
+[32m+[m[32m        focus_dash.timer_tick_signal.emit(0, 0, False, False)[m
+[32m+[m[32m        self.assertEqual(top_bar.btn_timer.text(), "⏱️ Timer")[m
+[32m+[m
+[32m+[m[32m        focus_dash.close()[m
+[32m+[m[32m        top_bar.close()[m
+[32m+[m
+ if __name__ == "__main__":[m
+     unittest.main()[m
