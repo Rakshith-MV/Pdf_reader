@@ -75,29 +75,17 @@ class DocumentListItemWidget(QWidget):
         info_layout.addWidget(self.meta_label)
 
         layout.addLayout(info_layout)
-        self.load_thumbnail()
-
-    def load_thumbnail(self):
-        file_path = self.doc_data.get("file_path")
-        if file_path and os.path.exists(file_path):
-            try:
-                reader = DocumentReader(file_path)
-                pixmap = reader.render_cover(45, 65)
-                reader.close()
-                if not pixmap.isNull():
-                    self.cover_label.setPixmap(pixmap)
-                    return
-            except Exception:
-                pass
+        # Rendering cover pages here blocks the UI for every row during a
+        # refresh.  Keep the recent-files list immediately interactive.
         self.cover_label.setText("PDF")
 
-
 class LibraryView(QWidget):
-    """Sidebar / Standalone Library view displaying catalog and Study Lists with header toggle."""
+    """Sidebar showing recently opened files and study-list controls."""
 
     document_selected = Signal(str)
     toggle_panel_requested = Signal()
     home_requested = Signal()
+    study_list_opened = Signal(int)
 
     def __init__(self, db_manager: DatabaseManager, parent=None):
         super().__init__(parent)
@@ -145,6 +133,8 @@ class LibraryView(QWidget):
 
         # Main Tab Widget
         self.tabs = QTabWidget()
+        self.tabs.setUsesScrollButtons(True)
+        self.tabs.tabBar().setExpanding(True)
         self.tabs.setStyleSheet(
             "QTabWidget::pane { border: 1px solid #333; background: #121212; } "
             "QTabBar::tab { background: #2a2a2a; color: #bbb; padding: 6px 10px; font-weight: bold; font-size: 11px; } "
@@ -177,7 +167,7 @@ class LibraryView(QWidget):
         cat_layout.addLayout(btn_layout)
 
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Filter library...")
+        self.search_input.setPlaceholderText("Filter recent files...")
         self.search_input.setClearButtonEnabled(True)
         self.search_input.textChanged.connect(self._filter_list)
         cat_layout.addWidget(self.search_input)
@@ -192,11 +182,12 @@ class LibraryView(QWidget):
         self.doc_list.customContextMenuRequested.connect(self._show_context_menu)
         cat_layout.addWidget(self.doc_list)
 
-        self.tabs.addTab(self.catalog_widget, "📚 All Library")
+        self.tabs.addTab(self.catalog_widget, "🕒 Recent Files")
 
         # Tab 2: Study Lists Manager
         self.study_list_view = StudyListWidget(self.db_manager, self)
         self.study_list_view.open_document_requested.connect(self.document_selected.emit)
+        self.study_list_view.study_list_selected.connect(self.study_list_opened.emit)
         self.tabs.addTab(self.study_list_view, "📝 Study Lists")
 
         outer_layout.addWidget(self.tabs)

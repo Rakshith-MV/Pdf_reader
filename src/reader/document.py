@@ -22,6 +22,10 @@ class DocumentReader:
 
         self.file_path = file_path
         self._lock = threading.Lock()
+        # Page geometry is immutable for the lifetime of a PDF.  Keeping it
+        # here avoids walking the document again when a recently-opened file
+        # is restored from the session cache.
+        self._page_sizes: Dict[int, Tuple[float, float]] = {}
         with self._lock:
             self.doc: fitz.Document = fitz.open(file_path)
             self.total_pages = len(self.doc)
@@ -56,40 +60,79 @@ class DocumentReader:
         """Returns (width, height) of the page in points (0-indexed page_number)."""
         if 0 <= page_number < self.total_pages:
             with self._lock:
+                cached_size = self._page_sizes.get(page_number)
+                if cached_size is not None:
+                    return cached_size
                 if self.doc:
                     page = self.doc[page_number]
                     rect = page.rect
-                    return rect.width, rect.height
+                    size = (rect.width, rect.height)
+                    self._page_sizes[page_number] = size
+                    return size
         return (600.0, 800.0)
 
-    def render_page(
-        self, page_number: int, zoom: float = 1.0, theme: str = "day"
-    ) -> QPixmap:
+    def get_displaylist(self, page_number: int) -> Optional[fitz.DisplayList]:
+        """Creates and returns a PyMuPDF DisplayList for page_number."""
+        if not (0 <= page_number < self.total_pages):
+            return None
+        with self._lock:
+            if not self.doc:
+                return None
+            page = self.doc[page_number]
+            return page.get_displaylist()
+
+    def render_page_image_from_displaylist(
+        self, display_list: fitz.DisplayList, zoom: float = 1.0, theme: str = "day", dpr: float = 1.0
+    ) -> QImage:
+        """Renders QImage directly from a cached DisplayList at requested zoom and devicePixelRatio."""
+        if not display_list:
+            return QImage()
+
+        scale = zoom * dpr
+        mat = fitz.Matrix(scale, scale)
+        pix = display_list.get_pixmap(matrix=mat, alpha=False)
+
+        qimg = QImage(
+            pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888
+        ).copy()
+
+        if theme in COLOR_THEMES and theme != "day":
+            qimg = self._apply_color_theme(qimg, theme)
+
+        return qimg
+
+    def render_page_image(
+        self, page_number: int, zoom: float = 1.0, theme: str = "day", dpr: float = 1.0
+    ) -> QImage:
         """
-        Renders page_number (0-indexed) to QPixmap at requested zoom level.
-        Uses in-memory PyMuPDF handle under thread lock for ultra-fast (2ms) renders.
-        Applies paper color themes ('day', 'dark', 'twilight', 'sepia', 'sepia_contrast').
+        Renders page_number (0-indexed) to QImage at requested zoom and devicePixelRatio.
+        Returns QImage safely off the GUI thread.
         """
         if not (0 <= page_number < self.total_pages):
-            return QPixmap()
+            return QImage()
 
         with self._lock:
             if not self.doc:
-                return QPixmap()
+                return QImage()
             page = self.doc[page_number]
-            page_rect_w, page_rect_h = page.rect.width, page.rect.height
-
-            mat = fitz.Matrix(zoom, zoom)
+            scale = zoom * dpr
+            mat = fitz.Matrix(scale, scale)
             pix = page.get_pixmap(matrix=mat, alpha=False)
 
             qimg = QImage(
                 pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888
             ).copy()
 
-        # Apply Paper Theme Color Transformations if not 'day'
         if theme in COLOR_THEMES and theme != "day":
             qimg = self._apply_color_theme(qimg, theme)
 
+        return qimg
+
+    def render_page(
+        self, page_number: int, zoom: float = 1.0, theme: str = "day"
+    ) -> QPixmap:
+        """Legacy helper returning QPixmap (GUI thread only)."""
+        qimg = self.render_page_image(page_number, zoom=zoom, theme=theme, dpr=1.0)
         return QPixmap.fromImage(qimg)
 
     def _apply_color_theme(self, qimg: QImage, theme: str) -> QImage:

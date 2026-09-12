@@ -5,11 +5,23 @@ import subprocess
 import time
 import urllib.parse
 import winreg
-from typing import List, Tuple, Optional, Dict, Any
-from PySide6.QtCore import Qt, QRectF, Signal, Slot, QPoint, QRect, QTimer, QUrl, QEvent, QThreadPool
+from typing import List, Tuple, Optional, Dict, Any, Set
+from PySide6.QtCore import (
+    Qt,
+    QRectF,
+    Signal,
+    Slot,
+    QPoint,
+    QRect,
+    QTimer,
+    QUrl,
+    QEvent,
+    QSettings,
+)
 from PySide6.QtGui import (
     QPainter,
     QPixmap,
+    QImage,
     QColor,
     QPen,
     QBrush,
@@ -36,41 +48,91 @@ from PySide6.QtWidgets import (
     QLabel,
 )
 from src.reader.document import DocumentReader
-from src.reader.render_cache import RenderCache
-from src.reader.render_worker import PageRenderTask
+from src.reader.render_coordinator import RenderCoordinator
+from src.reader.performance_metrics import metrics
 
 
-def find_chrome_executable() -> Optional[str]:
-    """Locates chrome.exe via Registry App Paths, standard Windows installation paths, or system PATH."""
+def find_browser_executable(browser: str) -> Optional[str]:
+    """Locate a supported external browser without requiring a hard-coded path."""
+    executable = "brave.exe" if browser == "brave" else "chrome.exe"
     for hkey in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
         try:
-            with winreg.OpenKey(hkey, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe") as key:
+            app_path = rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{executable}"
+            with winreg.OpenKey(hkey, app_path) as key:
                 val, _ = winreg.QueryValueEx(key, "")
                 if val and os.path.exists(val):
                     return val
         except Exception:
             pass
 
+    vendor_folder = "BraveSoftware\\Brave-Browser\\Application" if browser == "brave" else "Google\\Chrome\\Application"
     candidates = [
-        os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
-        os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
-        os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe"),
-        os.path.expandvars(r"%ProgramData%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(rf"%ProgramFiles%\{vendor_folder}\{executable}"),
+        os.path.expandvars(rf"%ProgramFiles(x86)%\{vendor_folder}\{executable}"),
+        os.path.expandvars(rf"%LocalAppData%\{vendor_folder}\{executable}"),
+        os.path.expandvars(rf"%ProgramData%\{vendor_folder}\{executable}"),
     ]
     for path in candidates:
         if os.path.exists(path):
             return path
 
-    which_chrome = shutil.which("chrome") or shutil.which("chrome.exe")
-    if which_chrome:
-        return which_chrome
+    for command in (browser, executable):
+        located = shutil.which(command)
+        if located:
+            return located
 
     return None
 
 
-def open_url_in_right_half_chrome(url: str):
-    """Launches Chrome in a new window snapped to the right half of the primary screen."""
-    chrome_path = find_chrome_executable()
+def find_ai_app_executable(app: str) -> Optional[str]:
+    """Find common Windows installs of the ChatGPT or Claude desktop app."""
+    executable = "ChatGPT.exe" if app == "chatgpt_app" else "Claude.exe"
+    app_folder = "ChatGPT" if app == "chatgpt_app" else "Claude"
+    candidates = [
+        os.path.expandvars(rf"%LocalAppData%\Programs\{app_folder}\{executable}"),
+        os.path.expandvars(rf"%LocalAppData%\{app_folder}\{executable}"),
+        os.path.expandvars(rf"%ProgramFiles%\{app_folder}\{executable}"),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return shutil.which(executable) or shutil.which(app_folder.lower())
+
+
+def open_url_in_preferred_browser(url: str):
+    """Open a URL in the browser or AI web app selected in the app preferences."""
+    preference = QSettings("ReadEraDesktop", "ReadEraDesktop").value("external_browser", "system")
+    preference = str(preference)
+    parsed_url = urllib.parse.urlparse(url)
+    search_text = urllib.parse.parse_qs(parsed_url.query).get("q", [url])[0]
+
+    if preference == "chatgpt":
+        url = "https://chatgpt.com/?q=" + urllib.parse.quote(search_text, safe="")
+    elif preference == "claude":
+        url = "https://claude.ai/new?q=" + urllib.parse.quote(search_text, safe="")
+
+    if preference in {"chatgpt_app", "claude_app"}:
+        app_path = find_ai_app_executable(preference)
+        if app_path:
+            try:
+                subprocess.Popen([app_path])
+                return
+            except Exception:
+                pass
+        # A selected desktop app can be unavailable after an uninstall; use
+        # its web counterpart rather than silently dropping the request.
+        url = (
+            "https://chatgpt.com/?q=" + urllib.parse.quote(search_text, safe="")
+            if preference == "chatgpt_app"
+            else "https://claude.ai/new?q=" + urllib.parse.quote(search_text, safe="")
+        )
+
+    browser_path = None
+    if preference in {"chrome", "brave"}:
+        browser_path = find_browser_executable(preference)
+    elif preference == "custom":
+        configured_path = str(QSettings("ReadEraDesktop", "ReadEraDesktop").value("external_browser_path", ""))
+        browser_path = configured_path if os.path.isfile(configured_path) else None
 
     screen = QApplication.primaryScreen()
     if screen:
@@ -82,10 +144,10 @@ def open_url_in_right_half_chrome(url: str):
     else:
         x, y, w, h = 960, 0, 960, 1040
 
-    if chrome_path:
+    if browser_path:
         try:
             cmd = [
-                chrome_path,
+                browser_path,
                 "--new-window",
                 f"--window-position={x},{y}",
                 f"--window-size={w},{h}",
@@ -96,8 +158,8 @@ def open_url_in_right_half_chrome(url: str):
         except Exception:
             pass
 
-    # Fallback to default browser if Chrome executable could not be launched directly
     QDesktopServices.openUrl(QUrl(url))
+
 
 HIGHLIGHT_COLORS = [
     ("#FFF59D", "Yellow"),
@@ -106,6 +168,7 @@ HIGHLIGHT_COLORS = [
     ("#F48FB1", "Pink"),
     ("#FFCC80", "Orange"),
 ]
+
 
 class FloatingSelectionToolbar(QFrame):
     """Floating menu bar displayed near selected text for highlighting, underlining, copying, and Google search."""
@@ -151,36 +214,39 @@ class FloatingSelectionToolbar(QFrame):
         self.btn_note.clicked.connect(lambda: self.comment_requested.emit(self.selected_color))
         layout.addWidget(self.btn_note)
 
-        self.btn_copy = QPushButton("Copy")
+        self.btn_copy = QPushButton("📋 Copy")
         self.btn_copy.clicked.connect(self.copy_requested.emit)
         layout.addWidget(self.btn_copy)
 
         self.btn_google = QPushButton("🔍 Search Google")
+        self.btn_google.setToolTip("Search selected text on Google")
         self.btn_google.setStyleSheet(
-            "QPushButton { background-color: #2196F3; color: white; font-weight: bold; border-radius: 3px; padding: 4px 8px; } "
-            "QPushButton:hover { background-color: #1e88e5; }"
+            "QPushButton { background: #1976D2; border: none; border-radius: 3px; padding: 4px 8px; color: white; font-weight: bold; font-size: 11px; } "
+            "QPushButton:hover { background: #1565C0; }"
         )
         self.btn_google.clicked.connect(self.search_google_requested.emit)
         layout.addWidget(self.btn_google)
 
     def _set_color(self, color_hex: str):
         self.selected_color = color_hex
-        self.btn_hl.setStyleSheet(f"background-color: {color_hex}; color: black; font-weight: bold;")
 
 
 class PageCanvas(QWidget):
-    """Canvas widget painting Chrome-grade PDF page pixmap, highlights, underlines, and text selection."""
+    """
+    Individual page canvas painting rendered PDF page pixmap, highlights,
+    search overlays, and text selection bounds.
+    """
 
     region_selected = Signal(int, float, float, float, float)
     text_selected = Signal(int, str, list)
     clear_selection_signal = Signal()
-    add_highlight_requested = Signal(int, list, str, str, str, str)
     bookmark_page_requested = Signal(int)
     page_note_requested = Signal(int)
+    request_words_signal = Signal(int)
 
-    def __init__(self, page_num: int = 0, parent=None):
+    def __init__(self, page_num: int, parent=None):
         super().__init__(parent)
-        self.page_num = page_num
+        self.page_num: int = page_num
         self.pixmap: QPixmap = QPixmap()
         self.zoom: float = 1.0
         self.unscaled_size: Tuple[float, float] = (600.0, 800.0)
@@ -190,15 +256,15 @@ class PageCanvas(QWidget):
         self.notes: List[Dict[str, Any]] = []
         self.highlights: List[Dict[str, Any]] = []
 
-        # Text Selection state
-        self.is_selecting: bool = False
+        # Selection state
         self.select_start: QPoint = QPoint()
         self.select_current: QPoint = QPoint()
+        self.is_selecting: bool = False
         self.selected_words: List[Tuple[float, float, float, float, str]] = []
         self.selected_rects: List[Tuple[float, float, float, float]] = []
         self.selected_text: str = ""
 
-        # Multi-click tracking (double-click word, triple-click sentence)
+        # Multi-click tracking
         self.click_count: int = 0
         self.last_click_time: float = 0.0
         self.last_click_pos: QPoint = QPoint()
@@ -267,14 +333,16 @@ class PageCanvas(QWidget):
             self.select_current = pos
             self.is_selecting = False
 
+            # Lazy word extraction request on selection start
+            if not self.words:
+                self.request_words_signal.emit(self.page_num)
+
             if self.click_count == 2:
-                # Double click -> select word under cursor
                 self._select_word_at_pos(pos)
                 if self.selected_text.strip() and self.selected_rects:
                     self.text_selected.emit(self.page_num, self.selected_text, self.selected_rects)
                 self.update()
             elif self.click_count >= 3:
-                # Triple click -> select sentence under cursor
                 self._select_sentence_at_pos(pos)
                 if self.selected_text.strip() and self.selected_rects:
                     self.text_selected.emit(self.page_num, self.selected_text, self.selected_rects)
@@ -293,8 +361,6 @@ class PageCanvas(QWidget):
         if self.zoom > 0 and self.words:
             px = pos.x() / self.zoom
             py = pos.y() / self.zoom
-
-            # Update Cursor Icon (I-Beam over text, Arrow elsewhere)
             is_over_text = any(
                 (w[0] - 2) <= px <= (w[2] + 2) and (w[1] - 2) <= py <= (w[3] + 2)
                 for w in self.words
@@ -331,7 +397,6 @@ class PageCanvas(QWidget):
 
                 self.update()
             elif self.click_count == 1:
-                # Single left click without drag: clear selection (do not select text)
                 self.clear_selection()
                 self.clear_selection_signal.emit()
 
@@ -341,7 +406,6 @@ class PageCanvas(QWidget):
         event.ignore()
 
     def _get_sorted_lines(self) -> List[List[Tuple[float, float, float, float, str]]]:
-        """Groups words into visual horizontal lines sorted top-to-bottom and left-to-right."""
         if not self.words:
             return []
 
@@ -350,7 +414,6 @@ class PageCanvas(QWidget):
             x0, y0, x1, y1, word = w
             matched = False
             for line in lines:
-                # Check vertical overlap with line bounds
                 l_y0 = min(item[1] for item in line)
                 l_y1 = max(item[3] for item in line)
                 l_height = max(1.0, l_y1 - l_y0)
@@ -362,9 +425,7 @@ class PageCanvas(QWidget):
             if not matched:
                 lines.append([w])
 
-        # Sort lines top-to-bottom
         lines.sort(key=lambda l: sum(w[1] for w in l) / len(l))
-        # Sort words inside each line left-to-right
         for line in lines:
             line.sort(key=lambda w: w[0])
 
@@ -377,7 +438,6 @@ class PageCanvas(QWidget):
         px = pos.x() / self.zoom
         py = pos.y() / self.zoom
 
-        # Direct hit check
         for w in self.words:
             x0, y0, x1, y1, text = w
             if (x0 - 2) <= px <= (x1 + 2) and (y0 - 2) <= py <= (y1 + 2):
@@ -386,7 +446,6 @@ class PageCanvas(QWidget):
                 self.selected_rects = [(x0, y0, x1, y1)]
                 return
 
-        # Proximity check on closest line
         lines = self._get_sorted_lines()
         best_word = None
         min_dist = float("inf")
@@ -400,14 +459,13 @@ class PageCanvas(QWidget):
                     min_dist = dist
                     best_word = w
 
-        if best_word and min_dist < 2500:  # within ~50px
+        if best_word and min_dist < 2500:
             x0, y0, x1, y1, text = best_word
             self.selected_words = [best_word]
             self.selected_text = text
             self.selected_rects = [(x0, y0, x1, y1)]
 
     def _select_sentence_at_pos(self, pos: QPoint):
-        """Selects the entire sentence containing the word at pos."""
         if not self.words or self.zoom <= 0:
             return
 
@@ -419,7 +477,6 @@ class PageCanvas(QWidget):
         if not flat_words:
             return
 
-        # Find target word index
         px = pos.x() / self.zoom
         py = pos.y() / self.zoom
         target_idx = 0
@@ -433,7 +490,6 @@ class PageCanvas(QWidget):
                 min_dist = dist
                 target_idx = idx
 
-        # Expand backwards to start of sentence
         start_idx = target_idx
         while start_idx > 0:
             prev_word = flat_words[start_idx - 1][4].strip()
@@ -441,7 +497,6 @@ class PageCanvas(QWidget):
                 break
             start_idx -= 1
 
-        # Expand forwards to end of sentence
         end_idx = target_idx
         while end_idx < len(flat_words) - 1:
             curr_word = flat_words[end_idx][4].strip()
@@ -457,11 +512,9 @@ class PageCanvas(QWidget):
     def _build_merged_line_rects(
         self, words: List[Tuple[float, float, float, float, str]]
     ) -> List[Tuple[float, float, float, float]]:
-        """Merges word bounding boxes into clean horizontal line highlight rectangles."""
         if not words:
             return []
 
-        # Group selected words into lines
         lines: List[List[Tuple[float, float, float, float, str]]] = []
         for w in words:
             matched = False
@@ -486,7 +539,6 @@ class PageCanvas(QWidget):
         return rects
 
     def _update_text_selection(self):
-        """Chrome PDF Viewer 2D text selection algorithm."""
         if not self.words or self.zoom <= 0:
             return
 
@@ -499,8 +551,6 @@ class PageCanvas(QWidget):
         if not lines:
             return
 
-        # Determine start line and end line by Y coordinate
-        # Normalize so (s_x, s_y) is top-leftmost and (c_x, c_y) is bottom-rightmost
         if (start_py > curr_py) or (abs(start_py - curr_py) < 8 and start_px > curr_px):
             s_x, s_y = curr_px, curr_py
             e_x, e_y = start_px, start_py
@@ -513,7 +563,6 @@ class PageCanvas(QWidget):
             l_y0 = min(w[1] for w in line)
             l_y1 = max(w[3] for w in line)
 
-            # Skip lines strictly above selection start or strictly below selection end
             if l_y1 < s_y - 10 or l_y0 > e_y + 10:
                 continue
 
@@ -535,7 +584,6 @@ class PageCanvas(QWidget):
                     if w[0] <= e_x:
                         selected_words.append(w)
             else:
-                # Middle lines: select all words
                 selected_words.extend(line)
 
         self.selected_words = selected_words
@@ -547,7 +595,7 @@ class PageCanvas(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
 
-        # 1. Paint PDF Page Pixmap
+        # 1. Paint PDF Page Pixmap (smooth scaled)
         if not self.pixmap.isNull():
             painter.drawPixmap(self.rect(), self.pixmap)
         else:
@@ -594,7 +642,7 @@ class PageCanvas(QWidget):
                 sw, sh = (x1 - x0) * self.zoom, (y1 - y0) * self.zoom
                 painter.drawRect(QRectF(sx0, sy0, sw, sh))
 
-        # 4. Draw Active Drag Selection Highlight
+        # 4. Draw Active Selection Highlight
         if self.selected_rects:
             painter.setPen(Qt.NoPen)
             painter.setBrush(QBrush(QColor(33, 150, 243, 100)))
@@ -604,10 +652,68 @@ class PageCanvas(QWidget):
                 painter.drawRect(QRectF(sx0, sy0, sw, sh))
 
 
+class PageLayoutModel:
+    """Precomputed virtual geometry model for document page sizes, Y-offsets, and scroll bounds."""
+
+    def __init__(self, page_sizes: List[Tuple[float, float]], spacing: int = 20, margin_x: int = 30):
+        self.page_sizes = page_sizes
+        self.spacing = spacing
+        self.margin_x = margin_x
+
+        self.zoom: float = 1.0
+        self.page_rects: List[QRect] = []
+        self.total_width: int = 0
+        self.total_height: int = 0
+
+    def update_zoom(self, zoom: float, viewport_width: int):
+        self.zoom = zoom
+        self.page_rects.clear()
+
+        y_offset = self.spacing
+        max_w = 0
+
+        for w, h in self.page_sizes:
+            scaled_w = int(w * zoom)
+            scaled_h = int(h * zoom)
+            x_offset = max(self.margin_x, (viewport_width - scaled_w) // 2) if viewport_width > scaled_w else self.margin_x
+
+            rect = QRect(x_offset, y_offset, scaled_w, scaled_h)
+            self.page_rects.append(rect)
+
+            y_offset += scaled_h + self.spacing
+            if scaled_w + 2 * self.margin_x > max_w:
+                max_w = scaled_w + 2 * self.margin_x
+
+        self.total_width = max(max_w, viewport_width)
+        self.total_height = y_offset
+
+    def get_visible_range(self, scroll_y: int, viewport_h: int, overscan_px: int = 1000) -> Tuple[int, int]:
+        if not self.page_rects:
+            return (0, -1)
+
+        top_bound = max(0, scroll_y - overscan_px)
+        bot_bound = scroll_y + viewport_h + overscan_px
+
+        first_idx = -1
+        last_idx = -1
+
+        for i, rect in enumerate(self.page_rects):
+            if rect.bottom() >= top_bound and rect.top() <= bot_bound:
+                if first_idx == -1:
+                    first_idx = i
+                last_idx = i
+
+        if first_idx == -1:
+            first_idx = 0
+            last_idx = min(len(self.page_rects) - 1, 0)
+
+        return (first_idx, last_idx)
+
+
 class PDFViewerWidget(QScrollArea):
     """
-    Chrome-grade PDF viewer supporting Continuous Vertical Scroll, High-DPI sharpness,
-    text selection toolbar, and Escape / click dismissal of text highlights.
+    Chrome-grade PDF viewer with virtualized layout rendering, dedicated RenderCoordinator,
+    byte-budgeted LRU caches, smooth zoom preview, and crisp High-DPI output.
     """
 
     page_changed = Signal(int)
@@ -620,33 +726,46 @@ class PDFViewerWidget(QScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.doc_reader: Optional[DocumentReader] = None
-        self.render_cache = RenderCache()
         self.current_page: int = 0
         self.zoom_level: float = 1.0
         self.theme: str = "day"
         self.is_continuous_scroll: bool = True
+        self.generation_id: int = 1
+        self.last_scroll_y: int = 0
+        self.scroll_direction: int = 1  # +1 down, -1 up
 
-        self.page_canvases: List[PageCanvas] = []
+        self.layout_model: Optional[PageLayoutModel] = None
+        self.active_canvases: Dict[int, PageCanvas] = {}
+        self.free_canvases: List[PageCanvas] = []
+
         self.search_boxes_by_page: Dict[int, List[Tuple[float, float, float, float]]] = {}
         self.notes_by_page: Dict[int, List[Dict[str, Any]]] = {}
         self.highlights_by_page: Dict[int, List[Dict[str, Any]]] = {}
-        self.pending_tasks: Dict[Tuple[int, float, str], bool] = {}
 
         self.setAlignment(Qt.AlignCenter)
-        self.setWidgetResizable(True)
+        self.setWidgetResizable(False)
         self.setStyleSheet("QScrollArea { background-color: #2b2b2b; border: none; }")
 
-        # Vertical Scroll Container
-        self.container = QWidget()
-        self.container_layout = QVBoxLayout(self.container)
-        self.container_layout.setAlignment(Qt.AlignCenter)
-        self.container_layout.setContentsMargins(30, 20, 30, 20)
-        self.container_layout.setSpacing(20)
-
+        # Container Widget representing total virtual canvas
+        self.container = QWidget(self)
         self.setWidget(self.container)
 
-        # Track viewport scrolling
-        self.verticalScrollBar().valueChanged.connect(self._on_scroll_position_changed)
+        # Dedicated Render Coordinator worker thread
+        self.coordinator = RenderCoordinator(self)
+        self.coordinator.page_rendered.connect(self._on_page_rendered_from_worker)
+        self.coordinator.words_extracted.connect(self._on_words_extracted_from_worker)
+        self.coordinator.start()
+
+        # Timers: 16ms Scroll Throttle & 120ms Zoom Debounce
+        self.scroll_throttle_timer = QTimer(self)
+        self.scroll_throttle_timer.setSingleShot(True)
+        self.scroll_throttle_timer.timeout.connect(self._process_scroll_update)
+
+        self.zoom_debounce_timer = QTimer(self)
+        self.zoom_debounce_timer.setSingleShot(True)
+        self.zoom_debounce_timer.timeout.connect(self._trigger_sharp_rerender)
+
+        self.verticalScrollBar().valueChanged.connect(self._on_scroll_triggered)
 
         # Floating Text Selection Toolbar
         self.toolbar = FloatingSelectionToolbar(self.viewport())
@@ -658,13 +777,17 @@ class PDFViewerWidget(QScrollArea):
 
         self.active_selection: Optional[Tuple[int, str, list]] = None
 
-        # Shortcut: Pressing ESC clears highlight toolbar and selections
         QShortcut(QKeySequence("Escape"), self, self.clear_selection_and_toolbar)
+
+    def closeEvent(self, event):
+        if self.coordinator:
+            self.coordinator.stop()
+        super().closeEvent(event)
 
     def clear_selection_and_toolbar(self):
         self.toolbar.hide()
         self.active_selection = None
-        for c in self.page_canvases:
+        for c in self.active_canvases.values():
             c.clear_selection()
 
     def set_document(
@@ -674,84 +797,261 @@ class PDFViewerWidget(QScrollArea):
         initial_zoom: float = 1.0,
         theme: str = "day",
     ):
+        metrics.start_document_load()
         self.doc_reader = reader
         self.current_page = max(0, min(initial_page, reader.total_pages - 1)) if reader.total_pages > 0 else 0
         self.zoom_level = initial_zoom
         self.theme = theme
-        self.render_cache.clear()
+        self.generation_id += 1
+
         self.clear_selection_and_toolbar()
 
-        self._rebuild_page_canvases()
-        self.update_view()
+        # Precompute page dimensions
+        sizes = [reader.get_page_size(i) for i in range(reader.total_pages)]
+        self.layout_model = PageLayoutModel(sizes)
+        self.layout_model.update_zoom(self.zoom_level, self.viewport().width())
 
-        QTimer.singleShot(50, lambda: self.set_page(self.current_page))
+        self.container.setFixedSize(self.layout_model.total_width, self.layout_model.total_height)
 
-    def _rebuild_page_canvases(self):
-        for c in self.page_canvases:
-            self.container_layout.removeWidget(c)
-            c.deleteLater()
-        self.page_canvases.clear()
+        # Update Render Coordinator with new document
+        self.coordinator.set_document(reader, doc_id=reader.file_path)
+        self.coordinator.set_generation_id(self.generation_id)
 
-        if not self.doc_reader or self.doc_reader.total_pages == 0:
-            return
+        self._update_virtualized_viewport()
 
-        if self.is_continuous_scroll:
-            for i in range(self.doc_reader.total_pages):
-                canvas = PageCanvas(page_num=i, parent=self.container)
-                canvas.region_selected.connect(self.region_note_requested.emit)
-                canvas.text_selected.connect(self._on_text_selected)
-                canvas.clear_selection_signal.connect(self.clear_selection_and_toolbar)
-                canvas.bookmark_page_requested.connect(self.bookmark_page_requested.emit)
-                canvas.page_note_requested.connect(self.page_note_requested.emit)
-                self.container_layout.addWidget(canvas)
-                self.page_canvases.append(canvas)
+        QTimer.singleShot(20, lambda: self.set_page(self.current_page))
+
+    def _get_canvas_from_pool(self, page_num: int) -> PageCanvas:
+        if self.free_canvases:
+            canvas = self.free_canvases.pop()
+            canvas.page_num = page_num
         else:
-            canvas = PageCanvas(page_num=self.current_page, parent=self.container)
+            canvas = PageCanvas(page_num=page_num, parent=self.container)
             canvas.region_selected.connect(self.region_note_requested.emit)
             canvas.text_selected.connect(self._on_text_selected)
             canvas.clear_selection_signal.connect(self.clear_selection_and_toolbar)
             canvas.bookmark_page_requested.connect(self.bookmark_page_requested.emit)
             canvas.page_note_requested.connect(self.page_note_requested.emit)
-            self.container_layout.addWidget(canvas)
-            self.page_canvases.append(canvas)
+            canvas.request_words_signal.connect(self._on_canvas_words_requested)
 
-    def set_page(self, page_num: int):
+        canvas.setParent(self.container)
+        return canvas
+
+    def _recycle_canvas(self, canvas: PageCanvas):
+        canvas.hide()
+        self.free_canvases.append(canvas)
+
+    def _update_virtualized_viewport(self):
+        if not self.layout_model or not self.doc_reader:
+            return
+
+        scroll_y = self.verticalScrollBar().value()
+        viewport_h = self.viewport().height()
+
+        if self.is_continuous_scroll:
+            first_idx, last_idx = self.layout_model.get_visible_range(scroll_y, viewport_h)
+        else:
+            first_idx = self.current_page
+            last_idx = self.current_page
+
+        needed_pages: Set[int] = set(range(first_idx, last_idx + 1))
+
+        # Recycle canvases out of visible range
+        for p_num in list(self.active_canvases.keys()):
+            if p_num not in needed_pages:
+                canvas = self.active_canvases.pop(p_num)
+                self._recycle_canvas(canvas)
+
+        dpr = self.devicePixelRatioF()
+
+        # Update or instantiate canvases for needed pages
+        for p_num in range(first_idx, last_idx + 1):
+            if p_num not in self.active_canvases:
+                canvas = self._get_canvas_from_pool(p_num)
+                self.active_canvases[p_num] = canvas
+
+            canvas = self.active_canvases[p_num]
+            rect = self.layout_model.page_rects[p_num]
+            canvas.setGeometry(rect)
+            canvas.show()
+
+            unscaled = self.layout_model.page_sizes[p_num]
+            cached_img = self.coordinator.image_cache.get(self.doc_reader.file_path, p_num, self.zoom_level, self.theme, dpr)
+            cached_words = self.coordinator.word_cache.get(self.doc_reader.file_path, p_num) or []
+
+            pixmap = QPixmap.fromImage(cached_img) if cached_img is not None else QPixmap()
+            canvas.set_page_data(
+                pixmap=pixmap,
+                zoom=self.zoom_level,
+                unscaled_size=unscaled,
+                words=cached_words,
+                search_boxes=self.search_boxes_by_page.get(p_num, []),
+                notes=self.notes_by_page.get(p_num, []),
+                highlights=self.highlights_by_page.get(p_num, []),
+            )
+
+            # Request raster render if not in cache
+            if cached_img is None:
+                self.coordinator.request_page_render(
+                    p_num, self.zoom_level, self.theme, dpr, self.generation_id, priority=1
+                )
+
+        metrics.widget_count = len(self.active_canvases)
+
+        # Request prefetch pages
+        self._prefetch_surrounding_pages(first_idx, last_idx)
+
+    def _prefetch_adjacent_pages(self):
+        """Backward compatibility helper for page prefetching."""
+        if self.layout_model and self.doc_reader:
+            first_idx, last_idx = self.layout_model.get_visible_range(
+                self.verticalScrollBar().value(), self.viewport().height()
+            )
+            self._prefetch_surrounding_pages(first_idx, last_idx)
+
+    def _prefetch_surrounding_pages(self, first_visible: int, last_visible: int):
         if not self.doc_reader or self.doc_reader.total_pages == 0:
             return
-        target = max(0, min(page_num, self.doc_reader.total_pages - 1))
 
-        if self.is_continuous_scroll and target < len(self.page_canvases):
-            target_canvas = self.page_canvases[target]
-            self.verticalScrollBar().setValue(target_canvas.y() - 10)
-            self.current_page = target
-            self.page_changed.emit(target)
-            self.update_view()
+        dpr = self.devicePixelRatioF()
+        prefetch_pages = []
+
+        if self.scroll_direction >= 0:
+            prefetch_pages = [last_visible + 1, last_visible + 2, first_visible - 1]
         else:
-            if target != self.current_page:
-                self.current_page = target
-                self.clear_selection_and_toolbar()
-                self._rebuild_page_canvases()
-                self.update_view()
-                self.page_changed.emit(self.current_page)
+            prefetch_pages = [first_visible - 1, first_visible - 2, last_visible + 1]
+
+        for p_num in prefetch_pages:
+            if 0 <= p_num < self.doc_reader.total_pages:
+                cached_img = self.coordinator.image_cache.get(self.doc_reader.file_path, p_num, self.zoom_level, self.theme, dpr)
+                if cached_img is None:
+                    prio = 2 if (self.scroll_direction >= 0 and p_num > last_visible) or (self.scroll_direction < 0 and p_num < first_visible) else 3
+                    self.coordinator.request_page_render(
+                        p_num, self.zoom_level, self.theme, dpr, self.generation_id, priority=prio
+                    )
+
+    def _on_scroll_triggered(self, value: int):
+        dy = value - self.last_scroll_y
+        if dy != 0:
+            self.scroll_direction = 1 if dy > 0 else -1
+        self.last_scroll_y = value
+
+        if not self.scroll_throttle_timer.isActive():
+            self.scroll_throttle_timer.start(16)
+
+    def _process_scroll_update(self):
+        t0 = time.perf_counter()
+        if not self.layout_model or not self.doc_reader:
+            return
+
+        scroll_y = self.verticalScrollBar().value()
+
+        # Identify current visible page
+        viewport_center = scroll_y + self.viewport().height() // 2
+        closest_page = 0
+        min_dist = float("inf")
+
+        for idx, rect in enumerate(self.layout_model.page_rects):
+            center = rect.top() + rect.height() // 2
+            dist = abs(center - viewport_center)
+            if dist < min_dist:
+                min_dist = dist
+                closest_page = idx
+
+        if closest_page != self.current_page:
+            self.current_page = closest_page
+            self.page_changed.emit(self.current_page)
+
+        self._update_virtualized_viewport()
+        metrics.record_scroll_event((time.perf_counter() - t0) * 1000.0)
+
+    @Slot(int, float, str, float, int, QImage)
+    def _on_page_rendered_from_worker(
+        self, page_num: int, zoom: float, theme: str, dpr: float, gen_id: int, qimg: QImage
+    ):
+        if gen_id != self.generation_id or qimg.isNull():
+            return
+
+        metrics.mark_first_page_rendered()
+        metrics.mark_final_render_complete()
+
+        if page_num in self.active_canvases:
+            canvas = self.active_canvases[page_num]
+            pixmap = QPixmap.fromImage(qimg)
+            unscaled = self.layout_model.page_sizes[page_num] if self.layout_model else (600.0, 800.0)
+            words = self.coordinator.word_cache.get(self.doc_reader.file_path, page_num) or []
+            canvas.set_page_data(
+                pixmap=pixmap,
+                zoom=self.zoom_level,
+                unscaled_size=unscaled,
+                words=words,
+                search_boxes=self.search_boxes_by_page.get(page_num, []),
+                notes=self.notes_by_page.get(page_num, []),
+                highlights=self.highlights_by_page.get(page_num, []),
+            )
+
+    @Slot(int, int, list)
+    def _on_words_extracted_from_worker(self, page_num: int, gen_id: int, words: list):
+        if gen_id != self.generation_id:
+            return
+        if page_num in self.active_canvases:
+            canvas = self.active_canvases[page_num]
+            canvas.words = words
+            canvas.update()
+
+    def _on_canvas_words_requested(self, page_num: int):
+        self.coordinator.request_words_extraction(page_num, self.generation_id)
+
+    def set_page(self, page_num: int):
+        if not self.doc_reader or self.doc_reader.total_pages == 0 or not self.layout_model:
+            return
+        target = max(0, min(page_num, self.doc_reader.total_pages - 1))
+        self.current_page = target
+
+        if self.is_continuous_scroll and target < len(self.layout_model.page_rects):
+            target_rect = self.layout_model.page_rects[target]
+            self.verticalScrollBar().setValue(max(0, target_rect.top() - 10))
+        else:
+            self.clear_selection_and_toolbar()
+
+        self._update_virtualized_viewport()
+        self.page_changed.emit(self.current_page)
 
     def set_theme(self, theme: str):
         if theme != self.theme:
             self.theme = theme
-            self.update_view()
+            self.generation_id += 1
+            self.coordinator.set_generation_id(self.generation_id)
+            self._update_virtualized_viewport()
 
     def toggle_continuous_scroll(self, enabled: bool):
         if enabled != self.is_continuous_scroll:
             self.is_continuous_scroll = enabled
-            self._rebuild_page_canvases()
-            self.update_view()
+            self._update_virtualized_viewport()
             self.set_page(self.current_page)
 
     def set_zoom(self, zoom: float):
         zoom = round(max(0.2, min(5.0, zoom)), 2)
         if abs(zoom - self.zoom_level) > 0.009:
             self.zoom_level = zoom
-            self.update_view()
+
+            # Fast visual scale update immediately
+            if self.layout_model:
+                self.layout_model.update_zoom(self.zoom_level, self.viewport().width())
+                self.container.setFixedSize(self.layout_model.total_width, self.layout_model.total_height)
+                for p_num, canvas in self.active_canvases.items():
+                    rect = self.layout_model.page_rects[p_num]
+                    canvas.setGeometry(rect)
+                    canvas.zoom = self.zoom_level
+                    canvas.update()
+
             self.zoom_changed.emit(self.zoom_level)
+            self.zoom_debounce_timer.start(120)
+
+    def _trigger_sharp_rerender(self):
+        self.generation_id += 1
+        self.coordinator.set_generation_id(self.generation_id)
+        self._update_virtualized_viewport()
 
     def fit_width(self):
         if not self.doc_reader or self.doc_reader.total_pages == 0:
@@ -772,7 +1072,9 @@ class PDFViewerWidget(QScrollArea):
 
     def set_search_highlights(self, search_boxes_by_page: Dict[int, List[Tuple[float, float, float, float]]]):
         self.search_boxes_by_page = search_boxes_by_page
-        self.update_view()
+        for p_num in search_boxes_by_page:
+            self.coordinator.request_words_extraction(p_num, self.generation_id)
+        self._update_virtualized_viewport()
 
     def set_document_annotations(
         self, notes: List[Dict[str, Any]], highlights: List[Dict[str, Any]]
@@ -787,144 +1089,10 @@ class PDFViewerWidget(QScrollArea):
             p = h["page_number"]
             self.highlights_by_page.setdefault(p, []).append(h)
 
-        self.update_view()
+        self._update_virtualized_viewport()
 
     def update_view(self):
-        if not self.doc_reader or not self.page_canvases:
-            return
-
-        viewport_rect = self.viewport().rect()
-        scroll_y = self.verticalScrollBar().value()
-
-        for canvas in self.page_canvases:
-            p_num = canvas.page_num
-            unscaled_size = self.doc_reader.get_page_size(p_num)
-
-            canvas_y = canvas.y()
-            canvas_h = int(unscaled_size[1] * self.zoom_level)
-
-            is_near_viewport = (
-                not self.is_continuous_scroll
-                or (canvas_y + canvas_h >= scroll_y - 1200 and canvas_y <= scroll_y + viewport_rect.height() + 1200)
-            )
-
-            if is_near_viewport:
-                cached_item = self.render_cache.get(p_num, self.zoom_level, self.theme)
-                if cached_item is not None:
-                    pixmap, words = cached_item
-                    canvas.set_page_data(
-                        pixmap=pixmap,
-                        zoom=self.zoom_level,
-                        unscaled_size=unscaled_size,
-                        words=words,
-                        search_boxes=self.search_boxes_by_page.get(p_num, []),
-                        notes=self.notes_by_page.get(p_num, []),
-                        highlights=self.highlights_by_page.get(p_num, []),
-                    )
-                else:
-                    # Enqueue background page rendering task off the UI thread
-                    task_key = (p_num, round(self.zoom_level, 2), self.theme)
-                    if task_key not in self.pending_tasks:
-                        self.pending_tasks[task_key] = True
-                        has_words = self.render_cache.get_words(p_num) is not None
-                        task = PageRenderTask(
-                            self.doc_reader, p_num, self.zoom_level, self.theme, skip_words=has_words
-                        )
-                        task.signals.render_complete.connect(self._on_page_rendered)
-                        QThreadPool.globalInstance().start(task)
-
-                    cached_words = self.render_cache.get_words(p_num) or []
-                    canvas.set_page_data(
-                        pixmap=QPixmap(),
-                        zoom=self.zoom_level,
-                        unscaled_size=unscaled_size,
-                        words=cached_words,
-                        search_boxes=self.search_boxes_by_page.get(p_num, []),
-                        notes=self.notes_by_page.get(p_num, []),
-                        highlights=self.highlights_by_page.get(p_num, []),
-                    )
-            else:
-                canvas.set_page_data(
-                    pixmap=QPixmap(),
-                    zoom=self.zoom_level,
-                    unscaled_size=unscaled_size,
-                )
-
-        # Trigger background prefetching for adjacent pages ahead of scroll direction
-        self._prefetch_adjacent_pages()
-
-    def _prefetch_adjacent_pages(self):
-        """Prefetches surrounding pages (current_page + 1, + 2, - 1) into RenderCache off main thread."""
-        if not self.doc_reader or self.doc_reader.total_pages == 0:
-            return
-
-        surrounding_pages = [self.current_page + 1, self.current_page + 2, self.current_page - 1]
-        for p_num in surrounding_pages:
-            if 0 <= p_num < self.doc_reader.total_pages:
-                cached_item = self.render_cache.get(p_num, self.zoom_level, self.theme)
-                if cached_item is None:
-                    task_key = (p_num, round(self.zoom_level, 2), self.theme)
-                    if task_key not in self.pending_tasks:
-                        self.pending_tasks[task_key] = True
-                        has_words = self.render_cache.get_words(p_num) is not None
-                        task = PageRenderTask(
-                            self.doc_reader, p_num, self.zoom_level, self.theme, skip_words=has_words
-                        )
-                        task.signals.render_complete.connect(self._on_page_rendered)
-                        QThreadPool.globalInstance().start(task)
-
-    @Slot(int, float, str, object, list)
-    def _on_page_rendered(self, page_num: int, zoom: float, theme: str, pixmap: QPixmap, words: list):
-        task_key = (page_num, round(zoom, 2), theme)
-        self.pending_tasks.pop(task_key, None)
-
-        if not words:
-            cached_words = self.render_cache.get_words(page_num)
-            if cached_words:
-                words = cached_words
-
-        if not pixmap.isNull():
-            self.render_cache.put(page_num, zoom, theme, pixmap, words)
-
-        if abs(zoom - self.zoom_level) <= 0.01 and theme == self.theme:
-            for canvas in self.page_canvases:
-                if canvas.page_num == page_num:
-                    unscaled_size = self.doc_reader.get_page_size(page_num) if self.doc_reader else (600.0, 800.0)
-                    canvas.set_page_data(
-                        pixmap=pixmap,
-                        zoom=self.zoom_level,
-                        unscaled_size=unscaled_size,
-                        words=words,
-                        search_boxes=self.search_boxes_by_page.get(page_num, []),
-                        notes=self.notes_by_page.get(page_num, []),
-                        highlights=self.highlights_by_page.get(page_num, []),
-                    )
-                    break
-
-    def _on_scroll_position_changed(self, value: int):
-        if not self.is_continuous_scroll or not self.page_canvases:
-            return
-
-        viewport_center = value + self.viewport().height() // 2
-        closest_page = 0
-        min_dist = float("inf")
-
-        for canvas in self.page_canvases:
-            center = canvas.y() + canvas.height() // 2
-            dist = abs(center - viewport_center)
-            if dist < min_dist:
-                min_dist = dist
-                closest_page = canvas.page_num
-
-        if closest_page != self.current_page:
-            self.current_page = closest_page
-            self.page_changed.emit(self.current_page)
-
-        self.update_view()
-
-    def mousePressEvent(self, event: QMouseEvent):
-        self.clear_selection_and_toolbar()
-        super().mousePressEvent(event)
+        self._update_virtualized_viewport()
 
     @Slot(int, str, list)
     def _on_text_selected(self, page_num: int, selected_text: str, rects: list):
@@ -966,7 +1134,7 @@ class PDFViewerWidget(QScrollArea):
             if text.strip():
                 query = urllib.parse.quote(text.strip())
                 search_url = f"https://www.google.com/search?q={query}"
-                open_url_in_right_half_chrome(search_url)
+                open_url_in_preferred_browser(search_url)
             self.clear_selection_and_toolbar()
 
     def next_page(self):
@@ -991,26 +1159,14 @@ class PDFViewerWidget(QScrollArea):
             p_delta_x = event.pixelDelta().x()
             a_delta_x = event.angleDelta().x()
 
-            if p_delta_y != 0:
-                dy = p_delta_y
-            elif a_delta_y != 0:
-                dy = int(a_delta_y * 1.2)
-            else:
-                dy = 0
-
-            if p_delta_x != 0:
-                dx = p_delta_x
-            elif a_delta_x != 0:
-                dx = int(a_delta_x * 1.2)
-            else:
-                dx = 0
+            dy = p_delta_y if p_delta_y != 0 else (int(a_delta_y * 1.2) if a_delta_y != 0 else 0)
+            dx = p_delta_x if p_delta_x != 0 else (int(a_delta_x * 1.2) if a_delta_x != 0 else 0)
 
             if dy != 0:
                 vbar = self.verticalScrollBar()
                 old_val = vbar.value()
                 new_val = old_val - dy
 
-                # Non-continuous mode page turning on scroll boundaries
                 if not self.is_continuous_scroll:
                     if new_val < vbar.minimum() and self.current_page > 0:
                         self.prev_page()

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QFileDialog,
     QMenu,
+    QToolButton,
 )
 from src.database.db_manager import DatabaseManager
 from src.reader.document import DocumentReader
@@ -49,6 +50,19 @@ class StudyListWidget(QWidget):
         )
         self.btn_create.clicked.connect(self._on_create_study_list)
         btn_layout.addWidget(self.btn_create)
+
+        self.btn_open_file = QToolButton()
+        self.btn_open_file.setText("Open file ▾")
+        self.btn_open_file.setToolTip("Open a file from the selected Study List")
+        self.btn_open_file.setPopupMode(QToolButton.InstantPopup)
+        self.btn_open_file.setStyleSheet(
+            "QToolButton { background-color: #424242; color: white; border-radius: 4px; padding: 6px; } "
+            "QToolButton:hover { background-color: #616161; }"
+        )
+        self.open_file_menu = QMenu(self.btn_open_file)
+        self.open_file_menu.aboutToShow.connect(self._populate_open_file_menu)
+        self.btn_open_file.setMenu(self.open_file_menu)
+        btn_layout.addWidget(self.btn_open_file)
 
         layout.addLayout(btn_layout)
 
@@ -91,6 +105,7 @@ class StudyListWidget(QWidget):
         self.refresh_study_lists()
 
     def refresh_study_lists(self):
+        previous_id = self.current_study_list_id
         self.lists_widget.clear()
         lists = self.db_manager.get_study_lists()
         for sl in lists:
@@ -99,8 +114,14 @@ class StudyListWidget(QWidget):
             self.lists_widget.addItem(item)
 
         if lists:
-            self.lists_widget.setCurrentRow(0)
-            self._on_list_clicked(self.lists_widget.item(0))
+            selected_row = next(
+                (index for index, study_list in enumerate(lists) if study_list["id"] == previous_id), 0
+            )
+            self.lists_widget.setCurrentRow(selected_row)
+            self._select_study_list(self.lists_widget.item(selected_row), announce=False)
+        else:
+            self.current_study_list_id = None
+            self.doc_list_widget.clear()
 
     @Slot()
     def _on_create_study_list(self):
@@ -111,13 +132,37 @@ class StudyListWidget(QWidget):
             self.refresh_study_lists()
 
     def _on_list_clicked(self, item: QListWidgetItem):
+        self._select_study_list(item, announce=True)
+
+    def _select_study_list(self, item: QListWidgetItem, announce: bool):
         if not item:
             return
         sl = item.data(Qt.UserRole)
         self.current_study_list_id = sl["id"]
         self.doc_header.setText(f"Documents in '{sl['name']}':")
         self.refresh_study_list_documents()
-        self.study_list_selected.emit(self.current_study_list_id)
+        if announce:
+            self.study_list_selected.emit(self.current_study_list_id)
+
+    def _populate_open_file_menu(self):
+        self.open_file_menu.clear()
+        if not self.current_study_list_id:
+            action = self.open_file_menu.addAction("Select a Study List first")
+            action.setEnabled(False)
+            return
+
+        documents = self.db_manager.get_study_list_documents(self.current_study_list_id)
+        if not documents:
+            action = self.open_file_menu.addAction("This Study List is empty")
+            action.setEnabled(False)
+            return
+
+        for document in documents:
+            title = document.get("title") or os.path.basename(document.get("file_path", "Document"))
+            action = self.open_file_menu.addAction(f"📄 {title}")
+            action.triggered.connect(
+                lambda checked=False, path=document.get("file_path", ""): self.open_document_requested.emit(path)
+            )
 
     def refresh_study_list_documents(self):
         self.doc_list_widget.clear()
@@ -133,6 +178,7 @@ class StudyListWidget(QWidget):
         if self.current_study_list_id and doc_id:
             self.db_manager.add_document_to_study_list(self.current_study_list_id, doc_id)
             self.refresh_study_list_documents()
+            self.study_list_selected.emit(self.current_study_list_id)
 
     def _on_doc_double_clicked(self, item: QListWidgetItem):
         doc = item.data(Qt.UserRole)
@@ -176,6 +222,7 @@ class StudyListWidget(QWidget):
                     continue
 
         self.refresh_study_list_documents()
+        self.study_list_selected.emit(self.current_study_list_id)
         QMessageBox.information(
             self, "Documents Added", f"Added {added_count} document(s) to active Study List!"
         )

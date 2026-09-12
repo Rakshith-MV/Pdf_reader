@@ -8,6 +8,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QScrollArea,
     QWidget,
+    QToolButton,
+    QMenu,
 )
 
 
@@ -40,6 +42,14 @@ class StudyListBarWidget(QFrame):
         self.lbl_title = QLabel("📚 Study List:")
         self.lbl_title.setStyleSheet("font-weight: bold; color: #2196F3; font-size: 11px;")
         main_layout.addWidget(self.lbl_title)
+
+        self.btn_file_menu = QToolButton()
+        self.btn_file_menu.setText("Files ▾")
+        self.btn_file_menu.setToolTip("Open any file in this Study List")
+        self.btn_file_menu.setPopupMode(QToolButton.InstantPopup)
+        self.file_menu = QMenu(self.btn_file_menu)
+        self.btn_file_menu.setMenu(self.file_menu)
+        main_layout.addWidget(self.btn_file_menu)
 
         # Navigation Buttons
         self.btn_prev_pdf = QPushButton("◀ Prev")
@@ -86,6 +96,14 @@ class StudyListBarWidget(QFrame):
 
         self.setVisible(True)
         self.lbl_title.setText(f"📚 {study_list_name}:")
+
+        self.file_menu.clear()
+        for doc in documents:
+            title = doc.get("title") or os.path.basename(doc.get("file_path", "Document"))
+            action = self.file_menu.addAction(f"📄 {title}")
+            action.triggered.connect(
+                lambda checked=False, fp=doc.get("file_path", ""): self.open_document_requested.emit(fp)
+            )
 
         # Clear existing pill buttons
         while self.pills_layout.count():

@@ -1,5 +1,5 @@
 from typing import Optional
-from PySide6.QtCore import Qt, QUrl, Signal, Slot
+from PySide6.QtCore import Qt, QUrl, Signal, Slot, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QWidget,
@@ -86,9 +86,11 @@ class WebBrowserWidget(QWidget):
 
     toggle_panel_requested = Signal()
 
-    def __init__(self, parent=None, initial_url: str = "https://www.google.com"):
+    def __init__(self, parent=None, initial_url: str = "https://www.google.com", defer_initial_tab: bool = False):
         super().__init__(parent)
         self.initial_url = initial_url
+        self._defer_initial_tab = defer_initial_tab
+        self._initial_tab_pending = False
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -175,7 +177,11 @@ class WebBrowserWidget(QWidget):
         # 3. Tab Widget
         self.tab_widget = QTabWidget()
         self.tab_widget.setTabsClosable(True)
-        self.tab_widget.setMovable(True)
+        # Prevent accidental tab reordering while keeping crowded tab bars
+        # navigable and predictable.
+        self.tab_widget.setMovable(False)
+        self.tab_widget.setUsesScrollButtons(True)
+        self.tab_widget.setElideMode(Qt.ElideRight)
         self.tab_widget.tabCloseRequested.connect(self.close_tab)
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
         self.tab_widget.setStyleSheet(
@@ -185,8 +191,21 @@ class WebBrowserWidget(QWidget):
         )
         main_layout.addWidget(self.tab_widget)
 
-        # Create initial tab
-        self.add_new_tab(url=self.initial_url, title="Google")
+        # Creating a WebEngine view can be expensive.  The hidden side panel
+        # is therefore empty until first opened by the reader window.
+        if not self._defer_initial_tab:
+            self.add_new_tab(url=self.initial_url, title="Google")
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._defer_initial_tab and self.tab_widget.count() == 0 and not self._initial_tab_pending:
+            self._initial_tab_pending = True
+            QTimer.singleShot(0, self._create_initial_tab)
+
+    def _create_initial_tab(self):
+        self._initial_tab_pending = False
+        if self.tab_widget.count() == 0:
+            self.add_new_tab(url=self.initial_url, title="Google")
 
     def add_new_tab(self, url: str = "https://www.google.com", title: str = "New Tab") -> BrowserTab:
         tab = BrowserTab(self, initial_url=url)

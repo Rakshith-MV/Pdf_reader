@@ -1,7 +1,8 @@
 import os
+from collections import OrderedDict
 from typing import Optional, List, Dict, Any, Tuple
-from PySide6.QtCore import Qt, Slot, QTimer
-from PySide6.QtGui import QAction, QKeySequence, QIcon, QShortcut
+from PySide6.QtCore import Qt, Slot, QTimer, QSettings
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence, QIcon, QShortcut
 from PySide6.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -65,7 +66,13 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self.db_manager = db_manager
         self.current_reader: Optional[DocumentReader] = None
+        # Retain a few recently used document handles.  PyMuPDF keeps parsed
+        # document state behind these handles, and the viewer's path-keyed
+        # raster cache can then be reused when switching PDFs.
+        self._reader_cache: OrderedDict[str, DocumentReader] = OrderedDict()
+        self._reader_cache_limit = 3
         self.current_doc_id: Optional[int] = None
+        self.active_study_list_id: Optional[int] = None
         self.current_theme: str = "day"
 
         # Search state
@@ -107,6 +114,7 @@ class MainWindow(QMainWindow):
         # 1. Left Library Panel
         self.library_view = LibraryView(self.db_manager, self.reader_splitter)
         self.library_view.document_selected.connect(self.open_document)
+        self.library_view.study_list_opened.connect(self._open_study_list)
         self.library_view.toggle_panel_requested.connect(self._toggle_library_panel)
         self.library_view.home_requested.connect(self._show_home_view)
         self.reader_splitter.addWidget(self.library_view)
@@ -170,7 +178,7 @@ class MainWindow(QMainWindow):
         self.reader_splitter.addWidget(self.sidebar_widget)
 
         # 4. Embedded Web Browser Panel (ChatGPT-style split view)
-        self.browser_widget = WebBrowserWidget(self.reader_splitter)
+        self.browser_widget = WebBrowserWidget(self.reader_splitter, defer_initial_tab=True)
         self.browser_widget.toggle_panel_requested.connect(self._toggle_browser_panel)
         self.browser_widget.setVisible(False)
         self.reader_splitter.addWidget(self.browser_widget)
@@ -214,6 +222,32 @@ class MainWindow(QMainWindow):
         self.act_add_note = QAction("Add &Note", self, shortcut="Ctrl+N", triggered=self.sidebar_widget._on_add_note_clicked)
         self.act_find = QAction("&Find Text...", self, shortcut=QKeySequence.Find, triggered=self._focus_search)
 
+        self.browser_preference_group = QActionGroup(self)
+        self.browser_preference_group.setExclusive(True)
+        self.browser_preference_actions = {}
+        selected = str(QSettings("ReadEraDesktop", "ReadEraDesktop").value("external_browser", "system"))
+        for key, label in (
+            ("system", "System default browser"),
+            ("chrome", "Google Chrome"),
+            ("brave", "Brave"),
+            ("chatgpt", "ChatGPT web app"),
+            ("claude", "Claude web app"),
+            ("chatgpt_app", "ChatGPT desktop app"),
+            ("claude_app", "Claude desktop app"),
+            ("custom", "Chosen application"),
+        ):
+            action = QAction(label, self, checkable=True)
+            action.setChecked(key == selected)
+            action.triggered.connect(lambda checked=False, value=key: self._set_external_browser(value))
+            self.browser_preference_group.addAction(action)
+            self.browser_preference_actions[key] = action
+
+        if not any(action.isChecked() for action in self.browser_preference_actions.values()):
+            self.browser_preference_actions["system"].setChecked(True)
+        self.act_choose_external_application = QAction(
+            "Choose application…", self, triggered=self._choose_external_application
+        )
+
     def _create_menus(self):
         menubar = self.menuBar()
         menubar.setVisible(False)
@@ -242,6 +276,10 @@ class MainWindow(QMainWindow):
 
         tools_menu = menubar.addMenu("&Tools")
         tools_menu.addAction(self.act_toggle_browser)
+        browser_menu = tools_menu.addMenu("Open links in")
+        browser_menu.addActions(self.browser_preference_group.actions())
+        browser_menu.addSeparator()
+        browser_menu.addAction(self.act_choose_external_application)
         tools_menu.addAction(self.act_continuous)
         tools_theme_menu = tools_menu.addMenu("Paper Color Themes")
         tools_theme_menu.addAction(self.act_theme_day)
@@ -262,6 +300,10 @@ class MainWindow(QMainWindow):
         more.addAction(self.act_scan)
         more.addSeparator()
         more.addAction(self.act_toggle_browser)
+        more_browser_menu = more.addMenu("Open links in")
+        more_browser_menu.addActions(self.browser_preference_group.actions())
+        more_browser_menu.addSeparator()
+        more_browser_menu.addAction(self.act_choose_external_application)
         more.addAction(self.act_toggle_lib)
         more.addAction(self.act_toggle_sidebar)
         more.addSeparator()
@@ -278,6 +320,24 @@ class MainWindow(QMainWindow):
         more.addAction(self.act_find)
         more.addSeparator()
         more.addAction(self.act_exit)
+
+    def _set_external_browser(self, browser: str):
+        QSettings("ReadEraDesktop", "ReadEraDesktop").setValue("external_browser", browser)
+
+    def _choose_external_application(self):
+        """Let the user select an installed desktop browser or AI client executable."""
+        current_path = str(QSettings("ReadEraDesktop", "ReadEraDesktop").value("external_browser_path", ""))
+        app_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose browser, ChatGPT, or Claude application",
+            current_path,
+            "Applications (*.exe);;All files (*)",
+        )
+        if app_path:
+            settings = QSettings("ReadEraDesktop", "ReadEraDesktop")
+            settings.setValue("external_browser_path", app_path)
+            settings.setValue("external_browser", "custom")
+            self.browser_preference_actions["custom"].setChecked(True)
 
     def _setup_shortcuts(self):
         QShortcut(QKeySequence("Left"), self, self.viewer_widget.prev_page)
@@ -303,11 +363,13 @@ class MainWindow(QMainWindow):
         self.position_debouncer.flush()
 
         try:
-            if self.current_reader:
-                self.current_reader.close()
-
             file_hash = get_file_hash(file_path)
-            reader = DocumentReader(file_path)
+            cache_key = os.path.normcase(os.path.abspath(file_path))
+            reader = self._reader_cache.pop(cache_key, None)
+            if reader is None or reader.doc is None:
+                reader = DocumentReader(file_path)
+            self._reader_cache[cache_key] = reader
+            self._trim_reader_cache(active_key=cache_key)
             doc_record = self.db_manager.get_or_create_document(
                 file_hash=file_hash,
                 file_path=file_path,
@@ -325,32 +387,69 @@ class MainWindow(QMainWindow):
             self.viewer_widget.set_document(
                 reader, initial_page=saved_page, initial_zoom=saved_zoom, theme=self.current_theme
             )
-            self.sidebar_widget.load_document_data(
-                doc_id=self.current_doc_id,
-                current_page=saved_page,
-                toc=reader.get_toc(),
-            )
-            self.bottom_bar.set_document_state(saved_page, reader.total_pages, saved_zoom)
-
-            self._update_all_annotations()
-            self.library_view.refresh_library()
-            self.home_view.refresh_home()
-
-            # Update Study List Bar if document belongs to a study list
-            study_lists = self.db_manager.get_study_lists_for_document(self.current_doc_id)
-            if study_lists:
-                sl = study_lists[0]
-                sl_docs = self.db_manager.get_study_list_documents(sl["id"])
-                self.study_list_bar.set_study_list(sl["name"], sl_docs, self.current_doc_id)
-                self.sidebar_widget.math_notes_tab.load_study_list_notes(sl["id"])
-            else:
-                self.study_list_bar.setVisible(False)
-
-            # Switch to Reader View (Stack Index 1)
+            # Give the first-page request a short, uncontended window before
+            # rebuilding potentially cover-heavy library/home UI.
             self._show_reader_view()
+            QTimer.singleShot(
+                150,
+                lambda r=reader, p=saved_page, z=saved_zoom, d=self.current_doc_id:
+                self._finish_document_open(r, p, z, d),
+            )
 
         except Exception as e:
             QMessageBox.critical(self, "Error Opening File", f"Failed to load document:\n{str(e)}")
+
+    def _trim_reader_cache(self, active_key: str):
+        """Close least-recent inactive PDFs once the small session cache is full."""
+        while len(self._reader_cache) > self._reader_cache_limit:
+            oldest_key, oldest_reader = self._reader_cache.popitem(last=False)
+            if oldest_key == active_key:
+                self._reader_cache[oldest_key] = oldest_reader
+                break
+            oldest_reader.close()
+
+    def _finish_document_open(
+        self, reader: DocumentReader, saved_page: int, saved_zoom: float, doc_id: int
+    ):
+        """Populate secondary panels after the first-page render can begin."""
+        if self.current_reader is not reader or self.current_doc_id != doc_id:
+            return
+
+        self.sidebar_widget.load_document_data(
+            doc_id=doc_id,
+            current_page=saved_page,
+            toc=reader.get_toc(),
+        )
+        self.bottom_bar.set_document_state(saved_page, reader.total_pages, saved_zoom)
+        self._update_all_annotations()
+        self.library_view.refresh_library()
+        self.home_view.refresh_home()
+
+        self._refresh_active_study_list_bar()
+
+    @Slot(int)
+    def _open_study_list(self, study_list_id: int):
+        """Make a clicked Study List the active bottom-bar collection."""
+        self.active_study_list_id = study_list_id
+        self._refresh_active_study_list_bar()
+
+    def _refresh_active_study_list_bar(self):
+        if not self.active_study_list_id:
+            self.study_list_bar.setVisible(False)
+            return
+
+        study_lists = self.db_manager.get_study_lists()
+        study_list = next(
+            (item for item in study_lists if item["id"] == self.active_study_list_id), None
+        )
+        if not study_list:
+            self.active_study_list_id = None
+            self.study_list_bar.setVisible(False)
+            return
+
+        documents = self.db_manager.get_study_list_documents(self.active_study_list_id)
+        self.study_list_bar.set_study_list(study_list["name"], documents, self.current_doc_id)
+        self.sidebar_widget.math_notes_tab.load_study_list_notes(self.active_study_list_id)
 
     def _toggle_fullscreen(self):
         if self.isFullScreen():
@@ -575,6 +674,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self.position_debouncer.flush()
-        if self.current_reader:
-            self.current_reader.close()
+        for reader in self._reader_cache.values():
+            reader.close()
+        self._reader_cache.clear()
         event.accept()

@@ -195,7 +195,12 @@ class BookCardWidget(QFrame):
         self.meta_label.setStyleSheet("color: #888888; font-size: 10px;")
         layout.addWidget(self.meta_label)
 
-        self.load_cover_image()
+        # Cover rasterization is intentionally deferred from dashboard
+        # construction.  Opening many PDFs just to repaint the home screen
+        # made document switches appear frozen.
+        self.cover_label.setPixmap(
+            self._generate_fallback_cover(133, 145, self.doc_data.get("title", "Book"))
+        )
 
     def load_cover_image(self):
         if self.file_path and os.path.exists(self.file_path):

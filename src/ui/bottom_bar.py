@@ -1,6 +1,3 @@
-import os
-import requests
-import xml.etree.ElementTree as ET
 from typing import List, Tuple
 from PySide6.QtCore import Qt, Signal, Slot, QTimer
 from PySide6.QtWidgets import (
@@ -17,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 class BottomBarWidget(QFrame):
-    """Top toolbar for page navigation, zoom adjustment, panel toggles, text search, Timer, VLC Music, and 3-line More menu."""
+    """Top toolbar for navigation, zoom, study timer, search, and panels."""
 
     prev_page_requested = Signal()
     next_page_requested = Signal()
@@ -131,18 +128,12 @@ class BottomBarWidget(QFrame):
 
         layout.addSpacing(6)
 
-        # --- Section 3: Study Timer & VLC Music Controls ---
+        # --- Section 3: Study Timer ---
         self.btn_timer = QPushButton("⏱️ Timer")
         self.btn_timer.setToolTip("Start or stop Study Timer / Pomodoro (e.g. 25 min)")
         self.btn_timer.setStyleSheet("QPushButton { background-color: #2e7d32; color: white; font-weight: bold; } QPushButton:hover { background-color: #388e3c; }")
         self.btn_timer.clicked.connect(self._toggle_study_timer)
         layout.addWidget(self.btn_timer)
-
-        self.btn_vlc = QPushButton("🎵 VLC")
-        self.btn_vlc.setToolTip("Toggle VLC Music Playback / Check Now Playing")
-        self.btn_vlc.setStyleSheet("QPushButton { background-color: #d84315; color: white; font-weight: bold; } QPushButton:hover { background-color: #e64a19; }")
-        self.btn_vlc.clicked.connect(self._toggle_vlc_music)
-        layout.addWidget(self.btn_vlc)
 
         layout.addStretch()
 
@@ -255,26 +246,5 @@ class BottomBarWidget(QFrame):
             self.btn_timer.setStyleSheet(
                 "QPushButton { background-color: #2e7d32; color: white; font-weight: bold; } QPushButton:hover { background-color: #388e3c; }"
             )
-
-    def _toggle_vlc_music(self):
-        host = os.getenv("VLC_HOST", "localhost").strip() or "localhost"
-        port = os.getenv("VLC_PORT", "8080").strip() or "8080"
-        password = os.getenv("VLC_HTTP_PASSWORD", "").strip()
-
-        url = f"http://{host}:{port}/requests/status.xml"
-        try:
-            resp = requests.get(url, params={"command": "pl_pause"}, auth=("", password), timeout=2)
-            if resp.status_code == 200:
-                root = ET.fromstring(resp.text)
-                state_elem = root.find("state")
-                state = state_elem.text.strip() if state_elem is not None and state_elem.text else "unknown"
-                QMessageBox.information(self, "VLC Music", f"🎵 VLC Playback toggled: {state}")
-            elif resp.status_code == 401:
-                QMessageBox.warning(self, "VLC Auth Error", "VLC HTTP Authentication failed. Check VLC_HTTP_PASSWORD in .env.")
-            else:
-                QMessageBox.warning(self, "VLC Error", f"VLC returned status code {resp.status_code}.")
-        except Exception:
-            QMessageBox.warning(self, "VLC Unreachable", f"Could not connect to VLC at http://{host}:{port}.\nMake sure VLC is running with Web Interface enabled.")
-
 
 TopBarWidget = BottomBarWidget
