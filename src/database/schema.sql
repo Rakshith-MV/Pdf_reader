@@ -64,3 +64,10 @@ CREATE TABLE IF NOT EXISTS focus_sessions (
     duration_minutes INTEGER NOT NULL,
     completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_documents_last_opened ON documents(last_opened DESC);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_doc ON bookmarks(document_id);
+CREATE INDEX IF NOT EXISTS idx_notes_doc ON notes(document_id);
+CREATE INDEX IF NOT EXISTS idx_highlights_doc_page ON highlights(document_id, page_number);
+CREATE INDEX IF NOT EXISTS idx_study_items_doc ON study_list_items(document_id);
+CREATE INDEX IF NOT EXISTS idx_focus_study_list ON focus_sessions(study_list_id);

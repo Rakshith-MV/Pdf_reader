@@ -4,7 +4,10 @@ import shutil
 import subprocess
 import time
 import urllib.parse
-import winreg
+try:
+    import winreg
+except ImportError:  # non-Windows
+    winreg = None
 from typing import List, Tuple, Optional, Dict, Any, Set
 from PySide6.QtCore import (
     Qt,
@@ -55,7 +58,7 @@ from src.reader.performance_metrics import metrics
 def find_browser_executable(browser: str) -> Optional[str]:
     """Locate a supported external browser without requiring a hard-coded path."""
     executable = "brave.exe" if browser == "brave" else "chrome.exe"
-    for hkey in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+    for hkey in ((winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER) if winreg else ()):
         try:
             app_path = rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{executable}"
             with winreg.OpenKey(hkey, app_path) as key:

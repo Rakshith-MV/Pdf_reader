@@ -37,3 +37,8 @@ class Debouncer(QObject):
             self.timer.stop()
             self._has_pending = False
             self.callback(*self._pending_args, **self._pending_kwargs)
+
+    def cancel(self):
+        """Drops any pending callback without running it."""
+        self.timer.stop()
+        self._has_pending = False
