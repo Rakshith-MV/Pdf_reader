@@ -105,6 +105,9 @@ class MainWindow(QMainWindow):
         self.home_view.open_document_requested.connect(self.open_document)
         self.home_view.open_file_requested.connect(self._on_menu_open)
         self.home_view.scan_folder_requested.connect(lambda: self.library_view._on_scan_folder_dialog())
+        self.home_view.study_list_deleted.connect(self._on_study_list_deleted)
+        self.home_view.study_lists_changed.connect(self._on_study_lists_changed)
+        self.home_view.document_removed.connect(self._on_document_removed)
         self.main_stack.addWidget(self.home_view)
 
         # Stack View 1: Reader Splitter
@@ -117,6 +120,9 @@ class MainWindow(QMainWindow):
         self.library_view.study_list_opened.connect(self._open_study_list)
         self.library_view.toggle_panel_requested.connect(self._toggle_library_panel)
         self.library_view.home_requested.connect(self._show_home_view)
+        self.library_view.study_list_deleted.connect(self._on_study_list_deleted)
+        self.library_view.study_lists_changed.connect(self._on_study_lists_changed)
+        self.library_view.document_removed.connect(self._on_document_removed)
         self.reader_splitter.addWidget(self.library_view)
 
         # 2. Main Center Viewer Container (Top Control Bar + PDF Viewer)
@@ -422,9 +428,38 @@ class MainWindow(QMainWindow):
         )
         self.bottom_bar.set_document_state(saved_page, reader.total_pages, saved_zoom)
         self._update_all_annotations()
-        self.library_view.refresh_library()
-        self.home_view.refresh_home()
+        # Home is rebuilt by _show_home_view when it is next shown, and the
+        # library panel only needs a rebuild if the user can actually see it.
+        self.library_view.request_refresh()
 
+        self._refresh_active_study_list_bar()
+
+    @Slot(int)
+    def _on_study_list_deleted(self, study_list_id: int):
+        if self.active_study_list_id == study_list_id:
+            self.active_study_list_id = None
+            self.study_list_bar.setVisible(False)
+
+    @Slot()
+    def _on_study_lists_changed(self):
+        # Keep whichever view did not trigger the change in sync.
+        self.library_view.study_list_view.refresh_study_lists()
+        if self.main_stack.currentIndex() == 0:
+            self.home_view.refresh_home()
+        self._refresh_active_study_list_bar()
+
+    @Slot(int)
+    def _on_document_removed(self, doc_id: int):
+        """Drop viewer state if the open document was removed from the library."""
+        if doc_id == self.current_doc_id:
+            self.position_debouncer.cancel()
+            self.current_reader = None
+            self.current_doc_id = None
+            self.setWindowTitle("ReadEra Desktop Reader - Home")
+            self.main_stack.setCurrentIndex(0)
+        self.library_view.request_refresh()
+        if self.main_stack.currentIndex() == 0:
+            self.home_view.refresh_home()
         self._refresh_active_study_list_bar()
 
     @Slot(int)

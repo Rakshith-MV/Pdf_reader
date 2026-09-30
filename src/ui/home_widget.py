@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QFileDialog,
 )
-from src.database.db_manager import DatabaseManager
+from src.database.db_manager import DatabaseManager, StudyListError
 from src.reader.document import DocumentReader
 from src.utils.hashing import get_file_hash
 from src.ui.focus_widget import FocusDashboardWidget
@@ -40,6 +40,7 @@ class StudyListProfileCard(QFrame):
     """
 
     clicked = Signal(int)  # study_list_id
+    delete_requested = Signal(int)  # study_list_id
 
     def __init__(self, study_list_data: Dict[str, Any], is_selected: bool = False, parent=None):
         super().__init__(parent)
@@ -105,6 +106,12 @@ class StudyListProfileCard(QFrame):
         if event.button() == Qt.LeftButton and self.sl_id:
             self.clicked.emit(self.sl_id)
         super().mousePressEvent(event)
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        act_delete = menu.addAction("🗑️ Delete Study List")
+        if menu.exec_(event.globalPos()) == act_delete and self.sl_id:
+            self.delete_requested.emit(self.sl_id)
 
 
 class BookCardWidget(QFrame):
@@ -278,6 +285,9 @@ class HomeWidget(QWidget):
     open_document_requested = Signal(str)
     open_file_requested = Signal()
     scan_folder_requested = Signal()
+    study_lists_changed = Signal()      # a list was created or deleted
+    study_list_deleted = Signal(int)    # study_list_id
+    document_removed = Signal(int)      # doc_id
 
     def __init__(self, db_manager: DatabaseManager, parent=None):
         super().__init__(parent)
@@ -502,14 +512,15 @@ class HomeWidget(QWidget):
             if not self.selected_study_list_id or not any(l["id"] == self.selected_study_list_id for l in study_lists):
                 self.selected_study_list_id = study_lists[0]["id"]
 
+            doc_counts = self.db_manager.get_study_list_doc_counts()
             for sl in study_lists:
                 sl_id = sl["id"]
-                sl_docs = self.db_manager.get_study_list_documents(sl_id)
-                sl["doc_count"] = len(sl_docs)
+                sl["doc_count"] = doc_counts.get(sl_id, 0)
                 is_sel = (sl_id == self.selected_study_list_id)
 
                 card = StudyListProfileCard(sl, is_selected=is_sel, parent=self.study_pills_container)
                 card.clicked.connect(self._on_study_list_profile_clicked)
+                card.delete_requested.connect(self._on_delete_study_list)
                 self.study_pills_layout.addWidget(card)
 
             self._populate_study_list_documents(self.selected_study_list_id)
@@ -586,9 +597,33 @@ class HomeWidget(QWidget):
         name, ok = QInputDialog.getText(self, "Create Study List", "Study List Name:")
         if ok and name.strip():
             desc, _ = QInputDialog.getText(self, "Description", "Description (optional):")
-            new_id = self.db_manager.create_study_list(name.strip(), desc.strip() if desc else "")
+            try:
+                new_id = self.db_manager.create_study_list(name.strip(), desc.strip() if desc else "")
+            except StudyListError as exc:
+                QMessageBox.warning(self, "Cannot Create Study List", str(exc))
+                return
             self.selected_study_list_id = new_id
             self.refresh_home()
+            self.study_lists_changed.emit()
+
+    @Slot(int)
+    def _on_delete_study_list(self, sl_id: int):
+        name = next((l["name"] for l in self.db_manager.get_study_lists() if l["id"] == sl_id), "this list")
+        reply = QMessageBox.question(
+            self,
+            "Delete Study List",
+            f"Delete the study list '{name}'?\nThe documents themselves are kept in your library.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        self.db_manager.delete_study_list(sl_id)
+        if self.selected_study_list_id == sl_id:
+            self.selected_study_list_id = None
+        self.refresh_home()
+        self.study_list_deleted.emit(sl_id)
+        self.study_lists_changed.emit()
 
     @Slot(int)
     def _prompt_add_to_study_list(self, doc_id: int):
@@ -624,6 +659,7 @@ class HomeWidget(QWidget):
         if reply == QMessageBox.Yes:
             self.db_manager.delete_document(doc_id)
             self.refresh_home()
+            self.document_removed.emit(doc_id)
 
     @Slot()
     def _on_add_files_to_home_study_list(self):

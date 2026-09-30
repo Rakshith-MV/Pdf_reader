@@ -5,6 +5,10 @@ from typing import Dict, List, Optional, Any
 
 SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "schema.sql")
 
+class StudyListError(ValueError):
+    """Raised when a study list cannot be created (empty or duplicate name)."""
+
+
 class DatabaseManager:
     """Handles local persistence using SQLite for reading state, bookmarks, notes, highlights, and study lists."""
 
@@ -20,6 +24,10 @@ class DatabaseManager:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON;")
+        # WAL + relaxed sync makes the many small writes (reading position,
+        # bookmarks) far cheaper than the default rollback journal.
+        conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA synchronous = NORMAL;")
         return conn
 
     def _init_db(self):
@@ -299,15 +307,36 @@ class DatabaseManager:
     # --- Study Lists Operations ---
 
     def create_study_list(self, name: str, description: str = "") -> int:
+        name = (name or "").strip()
+        if not name:
+            raise StudyListError("Study list name cannot be empty.")
+        conn = self._get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT 1 FROM study_lists WHERE name = ? COLLATE NOCASE", (name,))
+            if cur.fetchone():
+                raise StudyListError(f"A study list named '{name}' already exists.")
+            try:
+                cur.execute(
+                    "INSERT INTO study_lists (name, description) VALUES (?, ?)",
+                    (name, (description or "").strip()),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise StudyListError(f"A study list named '{name}' already exists.") from exc
+            conn.commit()
+            return cur.lastrowid
+        finally:
+            conn.close()
+
+    def get_study_list_doc_counts(self) -> Dict[int, int]:
+        """Document count per study list in one query (avoids N+1 lookups)."""
         conn = self._get_connection()
         try:
             cur = conn.cursor()
             cur.execute(
-                "INSERT INTO study_lists (name, description) VALUES (?, ?)",
-                (name, description),
+                "SELECT study_list_id, COUNT(*) AS n FROM study_list_items GROUP BY study_list_id"
             )
-            conn.commit()
-            return cur.lastrowid
+            return {row["study_list_id"]: row["n"] for row in cur.fetchall()}
         finally:
             conn.close()
 

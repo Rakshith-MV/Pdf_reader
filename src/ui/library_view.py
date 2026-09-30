@@ -86,6 +86,9 @@ class LibraryView(QWidget):
     toggle_panel_requested = Signal()
     home_requested = Signal()
     study_list_opened = Signal(int)
+    study_lists_changed = Signal()
+    study_list_deleted = Signal(int)
+    document_removed = Signal(int)
 
     def __init__(self, db_manager: DatabaseManager, parent=None):
         super().__init__(parent)
@@ -188,12 +191,41 @@ class LibraryView(QWidget):
         self.study_list_view = StudyListWidget(self.db_manager, self)
         self.study_list_view.open_document_requested.connect(self.document_selected.emit)
         self.study_list_view.study_list_selected.connect(self.study_list_opened.emit)
+        self.study_list_view.study_lists_changed.connect(self.study_lists_changed.emit)
+        self.study_list_view.study_list_deleted.connect(self.study_list_deleted.emit)
         self.tabs.addTab(self.study_list_view, "📝 Study Lists")
 
         outer_layout.addWidget(self.tabs)
+        self._dirty = False
         self.refresh_library()
 
+    def request_refresh(self):
+        """Refresh now if visible; otherwise defer until the panel is shown.
+
+        Rebuilding ~100 row widgets on every document switch is the dominant
+        cost of switching PDFs, and it is wasted when the panel is hidden.
+        """
+        if self.isVisible():
+            self.refresh_library()
+        else:
+            self._dirty = True
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._dirty:
+            self.refresh_library()
+
     def refresh_library(self):
+        self._dirty = False
+        self.doc_list.setUpdatesEnabled(False)
+        try:
+            self._rebuild_doc_list()
+        finally:
+            self.doc_list.setUpdatesEnabled(True)
+        if hasattr(self, 'study_list_view'):
+            self.study_list_view.refresh_study_lists()
+
+    def _rebuild_doc_list(self):
         self.doc_list.clear()
         documents = self.db_manager.get_recent_documents(limit=100)
         for doc in documents:
@@ -203,9 +235,8 @@ class LibraryView(QWidget):
 
             widget = DocumentListItemWidget(doc, self.doc_list)
             self.doc_list.setItemWidget(item, widget)
-
-        if hasattr(self, 'study_list_view'):
-            self.study_list_view.refresh_study_lists()
+        if self.search_input.text():
+            self._filter_list(self.search_input.text())
 
     def _filter_list(self, text: str):
         text = text.lower().strip()
@@ -290,8 +321,12 @@ class LibraryView(QWidget):
             if os.path.exists(file_path):
                 self.document_selected.emit(file_path)
         elif action == add_to_study_act:
-            self.study_list_view.add_current_document_to_active_list(doc_id)
-            QMessageBox.information(self, "Added", "Document added to active Study List!")
+            if self.study_list_view.add_current_document_to_active_list(doc_id):
+                QMessageBox.information(self, "Added", "Document added to active Study List!")
+            else:
+                QMessageBox.warning(
+                    self, "No Study List Selected", "Select or create a Study List first."
+                )
         elif action == copy_action:
             from PySide6.QtWidgets import QApplication
 
@@ -299,3 +334,4 @@ class LibraryView(QWidget):
         elif action == delete_action:
             self.db_manager.delete_document(doc_id)
             self.refresh_library()
+            self.document_removed.emit(doc_id)

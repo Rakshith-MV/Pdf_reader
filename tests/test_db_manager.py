@@ -1,9 +1,23 @@
 import unittest
 import tempfile
 import os
-from src.database.db_manager import DatabaseManager
+from src.database.db_manager import DatabaseManager, StudyListError
 
 class TestDatabaseManager(unittest.TestCase):
+
+    def test_study_list_validation_and_counts(self):
+        with self.assertRaises(StudyListError):
+            self.db.create_study_list("   ")
+        a = self.db.create_study_list("  Algebra ")
+        with self.assertRaises(StudyListError):
+            self.db.create_study_list("algebra")  # case-insensitive duplicate
+        self.assertEqual([l["name"] for l in self.db.get_study_lists()], ["Algebra"])
+        doc = self.db.get_or_create_document("h1", "/tmp/a.pdf", "A", 3)
+        self.db.add_document_to_study_list(a, doc["id"])
+        self.assertEqual(self.db.get_study_list_doc_counts(), {a: 1})
+        self.db.delete_study_list(a)
+        self.assertEqual(self.db.get_study_list_doc_counts(), {})
+        self.assertIsNotNone(self.db.get_document_by_hash("h1"))  # docs survive list delete
 
     def setUp(self):
         self.tmp_dir = tempfile.TemporaryDirectory()

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QToolButton,
 )
-from src.database.db_manager import DatabaseManager
+from src.database.db_manager import DatabaseManager, StudyListError
 from src.reader.document import DocumentReader
 from src.utils.hashing import get_file_hash
 
@@ -25,6 +25,8 @@ class StudyListWidget(QWidget):
 
     study_list_selected = Signal(int)       # study_list_id
     open_document_requested = Signal(str)    # file_path
+    study_lists_changed = Signal()           # a list was created or deleted
+    study_list_deleted = Signal(int)         # study_list_id
 
     def __init__(self, db_manager: DatabaseManager, parent=None):
         super().__init__(parent)
@@ -128,8 +130,14 @@ class StudyListWidget(QWidget):
         name, ok = QInputDialog.getText(self, "Create Study List", "Study List Name:")
         if ok and name.strip():
             desc, _ = QInputDialog.getText(self, "Description", "Description (optional):")
-            self.db_manager.create_study_list(name.strip(), desc.strip() if desc else "")
+            try:
+                new_id = self.db_manager.create_study_list(name.strip(), desc.strip() if desc else "")
+            except StudyListError as exc:
+                QMessageBox.warning(self, "Cannot Create Study List", str(exc))
+                return
+            self.current_study_list_id = new_id
             self.refresh_study_lists()
+            self.study_lists_changed.emit()
 
     def _on_list_clicked(self, item: QListWidgetItem):
         self._select_study_list(item, announce=True)
@@ -174,11 +182,14 @@ class StudyListWidget(QWidget):
             item.setData(Qt.UserRole, d)
             self.doc_list_widget.addItem(item)
 
-    def add_current_document_to_active_list(self, doc_id: int):
+    def add_current_document_to_active_list(self, doc_id: int) -> bool:
+        """Returns True if the document was added to the selected list."""
         if self.current_study_list_id and doc_id:
             self.db_manager.add_document_to_study_list(self.current_study_list_id, doc_id)
             self.refresh_study_list_documents()
             self.study_list_selected.emit(self.current_study_list_id)
+            return True
+        return False
 
     def _on_doc_double_clicked(self, item: QListWidgetItem):
         doc = item.data(Qt.UserRole)
@@ -239,5 +250,18 @@ class StudyListWidget(QWidget):
 
         action = menu.exec_(self.lists_widget.mapToGlobal(pos))
         if action == delete_act:
+            reply = QMessageBox.question(
+                self,
+                "Delete Study List",
+                f"Delete the study list '{sl['name']}'?\nThe documents themselves are kept in your library.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
             self.db_manager.delete_study_list(sl_id)
+            if self.current_study_list_id == sl_id:
+                self.current_study_list_id = None
             self.refresh_study_lists()
+            self.study_list_deleted.emit(sl_id)
+            self.study_lists_changed.emit()
